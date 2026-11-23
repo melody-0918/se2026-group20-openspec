@@ -1,0 +1,11 @@
+# 機敏資料：絕對不能上傳
+.env
+credentials*.json
+service-account*.json
+token*.json
+
+# 依賴套件與暫存檔
+node_modules/
+__pycache__/
+.venv/
+*.log
