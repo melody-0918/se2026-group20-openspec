@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>教師首頁</title></head>
+<body>
+  <main>
+    <h1>教師首頁</h1>
+    <p>共用教師工作區已就緒。</p>
+    <form method="post" action="{{ url_for('auth.logout') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit">登出</button>
+    </form>
+  </main>
+</body>
+</html>
