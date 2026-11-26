@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-Hant">
+<meta charset="utf-8">
+<title>Guided Notes 講義</title>
+<main>
+  <h1>Guided Notes 講義</h1>
+  <p><a href="{{ url_for('pages.teacher_home') }}">回教師首頁</a></p>
+
+  <h2>匯入</h2>
+  <form method="post" action="{{ url_for('notes.import_preview', course_id=course_id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Google Sheets 連結或 ID <input name="source" required></label>
+    <label>講義名稱（選填）<input name="title"></label>
+    <button>預覽</button>
+  </form>
+  {% if tabs %}
+    <form method="post" action="{{ url_for('notes.import_preview', course_id=course_id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="source" value="{{ source }}">
+      <input type="hidden" name="title" value="{{ requested_title }}">
+      <label>來源分頁
+        <select name="sheet_id">
+          {% for tab in tabs %}<option value="{{ tab.sheetId }}">{{ tab.title }}</option>{% endfor %}
+        </select>
+      </label>
+      <button>預覽所選分頁</button>
+    </form>
+  {% endif %}
+  {% if import_review %}
+    <h3>{{ import_review.title }}（來源分頁 {{ import_review.source_title }}）</h3>
+    <p>{{ import_review.question_count }} 題、{{ import_review.submission_count }} 個提交單位、{{ import_review.item_count }} 個作答格</p>
+    <ul>
+      {% for question in import_review.questions %}
+        <li>第 {{ question.display_number }} 題
+          {% if question.type == 'group' %}
+            {% for item in question['items'] %}{{ item.label }}{% endfor %}
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+    <form method="post" action="{{ url_for('notes.import_save', course_id=course_id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="preview_id" value="{{ import_review.preview_id }}">
+      <button>保存講義版本</button>
+    </form>
+  {% endif %}
+
+  <h2>已保存版本</h2>
+  {% if saved_version %}<p role="status">已保存版本 {{ saved_version.import_version }}。</p>{% endif %}
+  <ul>
+    {% for version in versions %}
+      <li>{{ version.title }}（版本 {{ version.import_version }}）</li>
+    {% else %}
+      <li>尚無已保存講義。</li>
+    {% endfor %}
+  </ul>
+
+  <h2>結算後回填</h2>
+  <form method="post" action="{{ url_for('notes.writeback_preview', course_id=course_id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>活動識別碼 <input name="activity_id" required value="{{ activity_id|default('') }}"></label>
+    <button>預覽勝組答案</button>
+  </form>
+  {% if writeback_review %}
+    {% set messages = {
+      'preview': '請確認要回填的答案。',
+      'source_changed': '來源已變動，請重新檢查並確認目前的預覽。',
+      'verified': '已回讀確認所有目標格。',
+      'unverified': '有格位尚未驗證，重試時會先回讀。',
+      'conflict': '回讀發現衝突，請檢查受影響的格位。'
+    } %}
+    {% set statuses = {'pending': '等待確認', 'verified': '已回讀確認', 'unverified': '未驗證', 'conflict': '衝突'} %}
+    <p role="status">{{ messages[writeback_review.status] }} 略過 {{ writeback_review.skipped_count }} 題無勝組題目。</p>
+    {% if writeback_review.issue %}<p>{{ writeback_review.issue.message }}</p>{% endif %}
+    {% if writeback_review.targets %}
+      <table>
+        <caption>{{ writeback_review.title }}</caption>
+        <thead><tr><th>填空</th><th>確認前原值</th><th>勝組答案</th><th>狀態</th></tr></thead>
+        <tbody>
+          {% for target in writeback_review.targets %}
+            <tr>
+              <td>{{ target.display_number }} {{ target.label }}（第 {{ target.row + 1 }} 列，第 {{ target.column + 1 }} 欄）</td>
+              <td>{{ target.original_display }}</td><td>{{ target.answer }}</td><td>{{ statuses[target.status] }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+    {% if writeback_review.status != 'verified' %}
+      <form method="post" action="{{ url_for('notes.writeback_confirm', course_id=course_id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="activity_id" value="{{ activity_id }}">
+        <input type="hidden" name="preview_id" value="{{ writeback_review.preview_id }}">
+        <button>{{ '重新檢查並續填' if writeback_review.status in ('unverified', 'conflict') else '確認回填' }}</button>
+      </form>
+    {% endif %}
+  {% endif %}
+</main>
+</html>
