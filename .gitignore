@@ -1,6 +1,11 @@
 # 機敏資料：絕對不能上傳
 .env
+.env.*
+!.env.example
+*.sqlite3
+instance/
 credentials*.json
+client_secret*.json
 service-account*.json
 token*.json
 
@@ -8,4 +13,6 @@ token*.json
 node_modules/
 __pycache__/
 .venv/
+.pytest_cache/
+*.egg-info/
 *.log
