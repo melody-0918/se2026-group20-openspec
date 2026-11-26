@@ -20,6 +20,8 @@ class Answer:
 
 @dataclass(frozen=True)
 class QuestionResult:
+    """One settled winner and its full answer set, or no winner and no answers."""
+
     question_id: str
     winner_id: str | None
     answers: tuple[Answer, ...] = ()
@@ -27,7 +29,7 @@ class QuestionResult:
 
 @dataclass(frozen=True)
 class EndedSnapshot:
-    """Internal input for Notes; a future B adapter translates its own result to this."""
+    """A's frozen input. B must authorize the activity and translate its settled result."""
 
     activity_id: str
     teacher_id: int
@@ -55,6 +57,8 @@ def _result_targets(layout: list[dict], snapshot: EndedSnapshot) -> tuple[list[d
                 raise _result_mismatch()
             skipped += 1
             continue
+        if not isinstance(result.winner_id, str) or not result.winner_id.strip():
+            raise _result_mismatch()
         answers = {answer.item_id: answer.text for answer in result.answers}
         if len(answers) != len(result.answers) or set(answers) != {item["item_id"] for item in question["items"]}:
             raise _result_mismatch()
@@ -146,6 +150,7 @@ def _review(plan: dict, preview_id: str, status: str, results: dict | None = Non
 
 
 def process_writeback(sheets_factory, snapshot: EndedSnapshot, course_id: str, preview_id: str | None = None) -> dict:
+    """Preview or confirm using the exact version and result frozen for this activity."""
     if not snapshot.closed or not snapshot.settled:
         raise AppError("RESULT_NOT_READY", "活動尚未結束並完成結算。", 409)
     source = find_version(snapshot.teacher_id, snapshot.import_id, snapshot.import_version)
@@ -175,8 +180,10 @@ def _process(sheets_factory, snapshot, source, saved_layout, binding, preview_id
     attempted = bool(previous and previous["attempted"])
     changed = saved is not None and (
         saved["structure"] != current["structure"] or saved["title"] != current["title"]
-        or (not attempted and [entry["original"] for entry in saved["entries"]]
-            != [entry["original"] for entry in current["entries"]])
+        or (not attempted and any(
+            (original["original"], original["original_display"]) != (entry["original"], entry["original_display"])
+            for original, entry in zip(saved["entries"], current["entries"])
+        ))
     )
     if saved is None or changed:
         plan = _with_originals(current, saved) if attempted else current

@@ -17,13 +17,25 @@ def teacher_versions(teacher_id: int, course_id: str | None = None) -> list:
     return get_db().execute(statement + " ORDER BY title, import_id, import_version DESC", parameters).fetchall()
 
 
-def version_catalog(version) -> dict:
+def version_catalog(version, *, include_text: bool = False) -> dict:
+    layout = json.loads(version["layout"])
+    questions = catalog_questions(layout)
+    if include_text:
+        for question, source in zip(questions, layout):
+            question["question_text"] = _display_text(source)
+            if question["type"] == "group":
+                for item, source_item in zip(question["items"], source["items"]):
+                    item["item_text"] = _display_text(source_item)
     return {
         "import_id": version["import_id"],
         "import_version": str(version["import_version"]),
         "title": version["title"],
-        "questions": catalog_questions(json.loads(version["layout"])),
+        "questions": questions,
     }
+
+
+def _display_text(source: dict) -> str:
+    return "\n".join(text for text in source.get("source_text", []) if text.strip())
 
 
 def find_version(teacher_id: int, import_id: str, version: str):

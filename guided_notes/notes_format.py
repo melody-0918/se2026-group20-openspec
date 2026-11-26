@@ -8,7 +8,7 @@ from .errors import AppError
 
 
 _HEADERS = {"題號", "題目", "作答"}
-_LABEL = re.compile(r"\(([0-9]+)\)")
+_LABEL = re.compile(r"\(\s*([0-9]+)\s*\)")
 
 
 @dataclass(frozen=True)
@@ -76,27 +76,27 @@ def _header(grid: SheetGrid) -> dict[str, Merge]:
     if len(matches) != 1 or len(matches[0][1]) != len(_HEADERS):
         raise _invalid("講義有重複的必要表頭，請保留唯一一列表頭。")
     row, entries = matches[0]
-    return {name: grid.span(row, column) for name, column in entries}
+    header = {name: grid.span(row, column) for name, column in entries}
+    ordered = sorted(header.values(), key=lambda area: area.column)
+    if any((header[name].row, header[name].column) != (row, column) for name, column in entries) or any(
+        left.end_column > right.column for left, right in zip(ordered, ordered[1:])
+    ):
+        raise _invalid(f"第 {row + 1} 列的講義表頭欄區重疊或標題不在左上角。")
+    return header
 
 
 def _number(grid: SheetGrid, row: int, column: int) -> str | None:
-    shown = normalize("NFKC", grid.text(row, column)).strip()
-    if re.fullmatch(r"[0-9]+", shown) and shown.strip("0"):
-        return shown.lstrip("0")
-    number = grid.entered(row, column).get("numberValue")
-    if isinstance(number, (int, float)) and number > 0 and number % 1 == 0:
-        return str(int(number))
+    entered = grid.entered(row, column)
+    if "numberValue" in entered:
+        number = entered["numberValue"]
+        if type(number) in (int, float) and number > 0 and number % 1 == 0:
+            return str(int(number))
+        return None
+    value = entered.get("stringValue", "")
+    digits = normalize("NFKC", value).strip()
+    if re.fullmatch(r"[0-9]+", digits) and digits.strip("0"):
+        return digits.lstrip("0")
     return None
-
-
-def _answer(grid: SheetGrid, row: int, start: int, end: int, number: str) -> Merge:
-    ranges = {grid.span(row, column) for column in range(start, end)}
-    if len(ranges) != 1:
-        raise _invalid(f"第 {number} 題無法唯一辨識答案格。")
-    answer = ranges.pop()
-    if answer.row != row or answer.end_row != row + 1 or answer.column < start or answer.end_column > end:
-        raise _invalid(f"第 {number} 題的答案格跨出作答位置。")
-    return answer
 
 
 def _item(grid: SheetGrid, answer: Merge, number: str, key: str, label: str, order: int) -> dict:
@@ -106,6 +106,7 @@ def _item(grid: SheetGrid, answer: Merge, number: str, key: str, label: str, ord
         "order": order,
         "row": answer.row,
         "column": answer.column,
+        "end_row": answer.end_row,
         "end_column": answer.end_column,
         "entered": grid.entered(answer.row, answer.column),
         "display": grid.text(answer.row, answer.column),
@@ -120,21 +121,35 @@ def _group_items(grid: SheetGrid, topic: Merge, area: Merge, number: str) -> lis
             span = grid.span(row, column)
             if (row, column) != (span.row, span.column):
                 continue
-            label = grid.text(row, column).strip()
-            match = _LABEL.fullmatch(normalize("NFKC", label))
-            if match and match[1].strip("0"):
+            label = grid.text(row, column)
+            if label.strip():
                 break
-            if label:
-                raise _invalid(f"第 {number} 題第 {row + 1} 列的小題標號位置有歧義。")
         else:
-            raise _invalid(f"第 {number} 題第 {row + 1} 列缺少小題標號。")
+            continue
+        match = _LABEL.fullmatch(normalize("NFKC", label).strip())
+        if not match or not match[1].strip("0") or span.end_row != row + 1:
+            raise _invalid(f"第 {number} 題第 {row + 1} 列的小題標號位置有歧義。")
         key = match[1].lstrip("0")
         if key in seen:
             raise _invalid(f"第 {number} 題的小題標號重複。")
         seen.add(key)
-        answer = _answer(grid, row, span.end_column, area.end_column, number)
+        answer = Merge(row, span.end_column, row + 1, area.end_column)
+        if answer.column >= answer.end_column or grid.span(row, answer.column) != answer:
+            raise _invalid(f"第 {number} 題第 {row + 1} 列無法唯一辨識答案格。")
         items.append(_item(grid, answer, number, key, label, len(items) + 1))
+    if len(items) < 2:
+        raise _invalid(f"第 {number} 題須有至少兩個小題，或一個涵蓋全題的作答格。")
     return items
+
+
+def _question_text(grid: SheetGrid, area: Merge, start_row: int, end_row: int) -> list[str]:
+    text = []
+    for row in range(start_row, end_row):
+        for column in range(area.column, area.end_column):
+            span = grid.span(row, column)
+            if (row, column) == (span.row, span.column) and span.end_column <= area.end_column:
+                text.append(grid.text(row, column))
+    return text
 
 
 def parse_layout(grid: SheetGrid) -> list[dict]:
@@ -143,8 +158,9 @@ def parse_layout(grid: SheetGrid) -> list[dict]:
     first_topic_row = max(area.end_row for area in header.values())
     questions = []
     seen = set()
+    previous_end_row = first_topic_row
     for row, column in sorted(grid.cells):
-        if column != number_area.column or row < first_topic_row:
+        if not number_area.column <= column < number_area.end_column or row < first_topic_row:
             continue
         topic = grid.span(row, column)
         if (topic.row, topic.column) != (row, column):
@@ -152,30 +168,28 @@ def parse_layout(grid: SheetGrid) -> list[dict]:
         number = _number(grid, row, column)
         if number is None:
             continue
+        if row < previous_end_row or topic.end_column > number_area.end_column:
+            raise _invalid(f"第 {number} 題的題號與其他題目或表頭欄區重疊。")
+        previous_end_row = topic.end_row
         if number in seen:
             raise _invalid(f"題號 {number} 重複。")
         seen.add(number)
-        is_group = topic.end_row > row + 1
-        if is_group:
-            items = _group_items(grid, topic, answer_area, number)
-        else:
-            answer = _answer(grid, row, answer_area.column, answer_area.end_column, number)
+        answer = Merge(row, answer_area.column, topic.end_row, answer_area.end_column)
+        is_single = grid.span(row, answer.column) == answer
+        if is_single:
             items = [_item(grid, answer, number, "1", "", 1)]
-        for item in items:
-            item["source_text"] = [
-                grid.text(item["row"], text_column) for text_column in range(text_area.column, text_area.end_column)
-            ]
+        else:
+            items = _group_items(grid, topic, answer_area, number)
+        text_ends = [item["row"] for item in items[1:]] + [topic.end_row]
+        for item, end_row in zip(items, text_ends):
+            item["source_text"] = _question_text(grid, text_area, item["row"], end_row)
         questions.append({
             "question_id": f"q-{number}",
             "display_number": grid.text(row, column),
-            "type": "group" if is_group else "single",
+            "type": "single" if is_single else "group",
             "items": items,
             "source_row": row,
-            "source_text": [
-                grid.text(text_row, text_column)
-                for text_row in range(row, topic.end_row)
-                for text_column in range(text_area.column, text_area.end_column)
-            ],
+            "source_text": _question_text(grid, text_area, row, topic.end_row),
         })
     if not questions:
         raise _invalid("題號欄找不到正整數題號。")

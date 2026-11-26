@@ -10,7 +10,7 @@ from httplib2 import Response
 
 from guided_notes.db import get_db
 from guided_notes.errors import AppError
-from guided_notes.notes import get_catalog, list_available_catalogs
+from guided_notes.notes import get_catalog, get_course_catalog, list_available_catalogs, list_course_catalogs
 from guided_notes.notes_format import Merge, SheetGrid, parse_layout
 from guided_notes.notes_sheets import GoogleSheets, source_from_link
 from guided_notes.notes_writeback import Answer, EndedSnapshot, QuestionResult
@@ -129,13 +129,17 @@ def test_layout_tracks_semantic_ids_and_merged_targets():
     assert [item["source_text"][0] for item in group["items"]] == ["題組第一小題文字", "題組第二小題文字"]
 
 
-@pytest.mark.parametrize("change", ["missing_header", "duplicate_header", "ambiguous_answer", "duplicate_number", "duplicate_label"])
+@pytest.mark.parametrize("change", [
+    "missing_header", "duplicate_header", "overlapping_header", "ambiguous_answer", "duplicate_number", "duplicate_label",
+])
 def test_parser_rejects_ambiguous_sources(change):
     grid = _layout()
     if change == "missing_header":
         del grid.cells[0, 1]
     elif change == "duplicate_header":
         grid.cells[0, 6] = _cell("作答")
+    elif change == "overlapping_header":
+        grid.merges.insert(0, Merge(0, 1, 1, 4))
     elif change == "ambiguous_answer":
         grid.merges.remove(Merge(2, 4, 3, 6))
     elif change == "duplicate_number":
@@ -153,6 +157,48 @@ def test_single_cell_layout_without_merge():
     result = parse_layout(grid)
     assert [question["display_number"] for question in result] == ["2", "5"]
     assert [question["items"][0]["column"] for question in result] == [7, 7]
+
+
+@pytest.mark.parametrize("entered", [{"numberValue": 1.4}, {"stringValue": "1.4"}, {"formulaValue": "=1.4"}, {}])
+def test_parser_does_not_use_rounded_display_as_question_number(entered):
+    grid = _layout()
+    grid.cells[1, 0] = {"userEnteredValue": entered, "formattedValue": "1"}
+    assert [question["question_id"] for question in parse_layout(grid)] == ["q-3"]
+    grid.cells[1, 0] = {"userEnteredValue": {"numberValue": 1}, "formattedValue": "01"}
+    question = parse_layout(grid)[0]
+    assert (question["question_id"], question["display_number"]) == ("q-1", "01")
+
+
+def test_group_labels_preserve_whitespace_and_allow_a_text_continuation_row():
+    grid = _layout()
+    grid.merges.remove(Merge(2, 0, 4, 1))
+    grid.merges.append(Merge(2, 0, 5, 1))
+    grid.merges.append(Merge(4, 4, 5, 6))
+    grid.cells[2, 3] = _cell("（ 1 ）")
+    grid.cells[3, 1] = _cell("第一小題續行")
+    grid.cells[4, 1] = _cell("題組第二小題文字")
+    grid.cells[4, 3] = _cell("( 2 )")
+    del grid.cells[3, 3]
+    group = parse_layout(grid)[1]
+    assert [(item["item_id"], item["label"], item["row"]) for item in group["items"]] == [
+        ("q-3-item-1", "（ 1 ）", 2), ("q-3-item-2", "( 2 )", 4),
+    ]
+    assert [text for text in group["items"][0]["source_text"] if text] == ["題組第一小題文字", "第一小題續行"]
+
+
+def test_single_merged_answer_may_span_all_rows_of_question():
+    grid = SheetGrid("跨列單題", {
+        (0, 0): _cell("題號"), (0, 1): _cell("題目"), (0, 2): _cell("作答"),
+        (1, 0): _cell("2"), (1, 1): _cell("兩列的題目"), (1, 2): _cell("(1)"),
+    }, [Merge(1, 0, 3, 1), Merge(1, 1, 3, 2), Merge(1, 2, 3, 3)])
+    question = parse_layout(grid)[0]
+    answer, = question["items"]
+    assert question["type"] == "single"
+    assert (answer["row"], answer["column"], answer["end_row"], answer["label"]) == (1, 2, 3, "")
+    grid.merges[-1] = Merge(1, 2, 4, 3)
+    with pytest.raises(AppError) as error:
+        parse_layout(grid)
+    assert error.value.code == "NOTES_FORMAT_INVALID"
 
 
 def test_import_preview_is_private_and_version_round_trip(app, client, notes_case):
@@ -207,6 +253,59 @@ def test_import_multiple_tabs_and_course_permissions(app, client, notes_case):
         assert len(list_available_catalogs(teacher_id)) == 1
     app.config.pop("NOTES_COURSE_ACCESS")
     assert _post(client, "import/preview", source="sheet-id").status_code == 503
+
+
+def test_course_catalog_scopes_listing_and_preserves_frozen_version_text(app, client, notes_case):
+    teacher_id, other_id, sheets = notes_case
+    sheets.grid.cells[1, 3] = _cell("來源單題答案")
+    sheets.grid.cells[2, 4] = _cell("來源題組答案")
+    first = _save(client)
+    other_course = _save(client, "another")
+    sheets.grid.cells[2, 1] = _cell("新版小題文字")
+    second = _save(client)
+    assert second == {**first, "import_version": "2"}
+    assert other_course["import_id"] != first["import_id"]
+    workspace = client.get("/notes/courses/course", headers={"Accept": "application/json"})
+    assert [entry["import_id"] for entry in workspace.json["catalogs"]] == [first["import_id"]] * 2
+    assert client.get("/notes/courses/other").status_code == 403
+
+    with app.app_context():
+        for course, expected in [("course", [second, first]), ("another", [other_course])]:
+            assert list_course_catalogs(teacher_id, course) == [
+                {**version, "title": sheets.grid.title, "question_count": 2} for version in expected
+            ]
+        assert list_course_catalogs(other_id, "other") == []
+        frozen = get_course_catalog(teacher_id, "course", **first)
+        single, group = frozen["questions"]
+        assert single["question_text"] == "單題文字"
+        assert group["question_text"] == "題組第一小題文字\n題組第二小題文字"
+        assert [(item["item_id"], item["order"], item["item_text"]) for item in group["items"]] == [
+            ("q-3-item-1", 1, "題組第一小題文字"), ("q-3-item-2", 2, "題組第二小題文字"),
+        ]
+        assert get_course_catalog(teacher_id, "course", **second)["questions"][1]["items"][0]["item_text"] == "新版小題文字"
+        assert "來源" not in json.dumps(frozen, ensure_ascii=False)
+        assert set(single["items"][0]) == {"item_id", "label", "order"}
+        assert set(group["items"][0]) == {"item_id", "label", "order", "item_text"}
+        for actor, course, version, expected in [
+            (teacher_id, "another", first, ("CATALOG_NOT_FOUND", 404)),
+            (other_id, "other", first, ("CATALOG_NOT_FOUND", 404)),
+            (teacher_id, "course", {**first, "import_version": "01"}, ("CATALOG_NOT_FOUND", 404)),
+            (teacher_id, "other", first, ("COURSE_FORBIDDEN", 403)),
+            (999, "course", first, ("TEACHER_REQUIRED", 401)),
+        ]:
+            with pytest.raises(AppError) as error:
+                get_course_catalog(actor, course, **version)
+            assert (error.value.code, error.value.status_code) == expected
+        app.config["DEMO_CATALOG"] = True
+        assert list_available_catalogs(other_id)[0]["import_id"] == "demo-guided-notes"
+        assert list_course_catalogs(other_id, "other") == []
+        with pytest.raises(AppError) as error:
+            list_course_catalogs(teacher_id, None)
+        assert (error.value.code, error.value.status_code) == ("COURSE_FORBIDDEN", 403)
+        app.config.pop("NOTES_COURSE_ACCESS")
+        with pytest.raises(AppError) as error:
+            list_course_catalogs(teacher_id, "course")
+        assert (error.value.code, error.value.status_code) == ("NOTES_INTEGRATION_PENDING", 503)
 
 
 def test_notes_session_csrf_and_legacy_database(app, client, notes_case, tmp_path):
@@ -267,9 +366,11 @@ def test_writeback_reconfirms_moved_source_and_only_writes_winner(app, client, n
     sheets.grid = _layout(5, 3)
     changed = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
     assert changed.status_code == 409
+    assert changed.json["error"]["code"] == "SOURCE_PREVIEW_STALE"
     recheck = changed.json["writeback_review"]
     assert recheck["status"] == "source_changed" and not sheets.writes
-    assert _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"]).status_code == 409
+    stale = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
+    assert (stale.status_code, stale.json["error"]["code"]) == (409, "SOURCE_PREVIEW_STALE")
     confirmed = _post(client, "writeback/confirm", activity_id="event", preview_id=recheck["preview_id"])
     result = confirmed.json["writeback_review"]
     assert result["status"] == "verified" and result["skipped_count"] == 1
@@ -288,6 +389,7 @@ def test_writeback_partial_failure_then_safe_retry(app, client, notes_case):
     sheets.mode = "partial"
     partial = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
     assert partial.status_code == 502
+    assert partial.json["error"]["code"] == "SHEETS_WRITE_UNVERIFIED"
     assert [target["status"] for target in partial.json["writeback_review"]["targets"]] == ["verified", "unverified"]
     sheets.mode = "normal"
     retried = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
@@ -303,6 +405,7 @@ def test_writeback_readback_conflict_wont_overwrite_on_retry(app, client, notes_
     sheets.mode = "mismatch"
     first = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
     assert first.status_code == 409 and first.json["writeback_review"]["status"] == "conflict"
+    assert first.json["error"]["code"] == "WRITEBACK_CONFLICT"
     retry = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
     assert retry.status_code == 409 and len(sheets.writes) == 1
 
@@ -329,6 +432,7 @@ def test_writeback_lost_readback_reports_auth_and_rechecks_without_rewrite(app, 
     first = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
     result = first.json["writeback_review"]
     assert (first.status_code, result["status"], result["issue"]["code"]) == (502, "unverified", "SHEETS_AUTH_REQUIRED")
+    assert first.json["error"]["code"] == "SHEETS_WRITE_UNVERIFIED"
     sheets.mode = "normal"
     retry = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
     assert retry.json["writeback_review"]["status"] == "verified"
@@ -349,12 +453,26 @@ def test_writeback_repreviews_edited_old_value_and_rejects_new_question(app, cli
     assert denied.json["error"]["code"] == "SOURCE_REIMPORT_REQUIRED" and not sheets.writes
 
 
+def test_writeback_repreviews_changed_display_without_writing(app, client, notes_case):
+    teacher_id, _, sheets = notes_case
+    sheets.grid.cells[2, 4] = {"userEnteredValue": {"formulaValue": "=A1"}, "formattedValue": "之前"}
+    snapshot = _snapshot(teacher_id, _save(client))
+    app.config["NOTES_ENDED_SNAPSHOT"] = lambda *_: snapshot
+    review = _post(client, "writeback/preview", activity_id="event").json["writeback_review"]
+    sheets.grid.cells[2, 4]["formattedValue"] = "現在"
+    changed = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
+    assert changed.status_code == 409 and changed.json["writeback_review"]["status"] == "source_changed"
+    assert changed.json["writeback_review"]["targets"][0]["original_display"] == "現在"
+    assert not sheets.writes
+
+
 @pytest.mark.parametrize(("defect", "error_code"), [
     ("pending", "RESULT_NOT_READY"), ("not_closed", "RESULT_NOT_READY"),
     ("version", "RESULT_CATALOG_MISMATCH"), ("duplicate_question", "RESULT_CATALOG_MISMATCH"),
     ("unknown_question", "RESULT_CATALOG_MISMATCH"), ("unknown_item", "RESULT_CATALOG_MISMATCH"),
     ("duplicate_item", "RESULT_CATALOG_MISMATCH"), ("missing_item", "RESULT_CATALOG_MISMATCH"),
     ("other_teacher", "ACTIVITY_NOT_FOUND"), ("integration", "NOTES_INTEGRATION_PENDING"),
+    ("empty_winner", "RESULT_CATALOG_MISMATCH"), ("other_course", "RESULT_CATALOG_MISMATCH"),
 ])
 def test_invalid_settlement_does_not_reach_google(app, client, notes_case, defect, error_code):
     teacher_id, other_id, sheets = notes_case
@@ -365,6 +483,8 @@ def test_invalid_settlement_does_not_reach_google(app, client, notes_case, defec
         "version": replace(snapshot, import_version="99"), "duplicate_question": replace(snapshot, questions=(first, group, group)),
         "unknown_question": replace(snapshot, questions=(first, replace(group, question_id="bad"))),
         "other_teacher": replace(snapshot, teacher_id=other_id),
+        "empty_winner": replace(snapshot, questions=(first, replace(group, winner_id=""))),
+        "other_course": snapshot,
     }
     bad_items = {
         "unknown_item": (group.answers[0], Answer("bad-item", "x")),
@@ -376,7 +496,8 @@ def test_invalid_settlement_does_not_reach_google(app, client, notes_case, defec
                     if defect in bad_items else bad[defect])
         app.config["NOTES_ENDED_SNAPSHOT"] = lambda *_: snapshot
     reads_before = list(sheets.reads)
-    assert _post(client, "writeback/preview", activity_id="event").json["error"]["code"] == error_code
+    course = "another" if defect == "other_course" else "course"
+    assert _post(client, "writeback/preview", course, activity_id="event").json["error"]["code"] == error_code
     assert sheets.reads == reads_before and not sheets.writes
 
 

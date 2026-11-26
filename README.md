@@ -9,7 +9,7 @@
 
 使用 Python 3.13、Flask app factory、Jinja、原生 JavaScript、SQLite，只在本機執行。`notes`、`activities`、`quiz` 各自以 Blueprint 掛載。課程、課堂、加入碼、學生加入、活動流程、同步、作答、順位、結算、Google Sheets 匯入／回填與 CSV 匯出由後續 OpenSpec changes 負責。
 
-activities 與 quiz 透過 notes 的 `list_available_catalogs(teacher_id)` 和 `get_catalog(teacher_id, import_id, import_version)` 函式取得清單。清單摘要含 `import_id`、`import_version`、`title`、`question_count`，題目及作答項目結構見 [Foundation 規格](openspec/specs/app-foundation/spec.md)。設定 `GUIDED_NOTES_DEMO_CATALOG=1` 時只會取得示範清單，驗收正式講義時使用 `0`。正式講義保存在共用 SQLite，D15 課程授權和 B 的結算快照仍需串接。
+Foundation 的 `list_available_catalogs(teacher_id)` 和 `get_catalog(teacher_id, import_id, import_version)` 保留既有清單結構與示範模式。正式講義保存在共用 SQLite，驗收時使用 `GUIDED_NOTES_DEMO_CATALOG=0`。A 已提供課程範圍的 `list_course_catalogs()` 和 `get_course_catalog()`，後者可取得固定版本的題目與小題文字。B 仍需接入課程授權、活動選用與結算快照。參照 [Foundation 規格](openspec/specs/app-foundation/spec.md)、[Notes 整合設計](openspec/changes/add-guided-notes-import-writeback/design.md)。
 
 ## 環境變數與機敏資料
 

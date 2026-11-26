@@ -6,13 +6,19 @@ from .db import get_db
 from .errors import AppError
 from .notes_format import catalog_questions, parse_layout
 from .notes_sheets import GoogleSheets, authorize_sheets, google_credentials_paths, source_from_link
-from .notes_store import create_import_preview, save_import, teacher_versions, version_catalog
+from .notes_store import create_import_preview, find_version, save_import, teacher_versions, version_catalog
 from .notes_writeback import process_writeback
 from .pages import teacher_required
 
 
 bp = Blueprint("notes", __name__)
 bp.cli.add_command(authorize_sheets)
+
+_WRITEBACK_ERRORS = {
+    "source_changed": (409, "SOURCE_PREVIEW_STALE", "來源已變更，請核對並確認新的回填預覽。"),
+    "conflict": (409, "WRITEBACK_CONFLICT", "答案格有衝突，請先核對來源值與回填結果。"),
+    "unverified": (502, "SHEETS_WRITE_UNVERIFIED", "尚無法確認回填結果，重試前會先回讀。"),
+}
 
 _DEMO_CATALOG = {
     "import_id": "demo-guided-notes",
@@ -57,6 +63,17 @@ def _catalogs_for_teacher(teacher_id: int) -> list[dict]:
     return [version_catalog(version) for version in teacher_versions(teacher_id)]
 
 
+def _catalog_summary(catalog: dict) -> dict:
+    return {
+        **{key: catalog[key] for key in ("import_id", "import_version", "title")},
+        "question_count": len(catalog["questions"]),
+    }
+
+
+def _catalog_not_found() -> AppError:
+    return AppError("CATALOG_NOT_FOUND", "找不到可供此教師存取的題目清單。", 404)
+
+
 def _require_teacher(teacher_id: int) -> None:
     if teacher_id is None:
         raise AppError("TEACHER_REQUIRED", "需要有效的教師身分才能讀取題目清單。", 401)
@@ -69,23 +86,8 @@ def list_available_catalogs(teacher_id: int) -> list[dict]:
     """List catalogs available to a teacher (demo data is shared to logged-in callers)."""
     _require_teacher(teacher_id)
     if _demo_enabled():
-        return [
-            {
-                "import_id": _DEMO_CATALOG["import_id"],
-                "import_version": _DEMO_CATALOG["import_version"],
-                "title": _DEMO_CATALOG["title"],
-                "question_count": len(_DEMO_CATALOG["questions"]),
-            }
-        ]
-    return [
-        {
-            "import_id": catalog["import_id"],
-            "import_version": catalog["import_version"],
-            "title": catalog["title"],
-            "question_count": len(catalog["questions"]),
-        }
-        for catalog in _catalogs_for_teacher(teacher_id)
-    ]
+        return [_catalog_summary(_DEMO_CATALOG)]
+    return [_catalog_summary(catalog) for catalog in _catalogs_for_teacher(teacher_id)]
 
 
 def get_catalog(teacher_id: int, import_id: str, import_version: str) -> dict:
@@ -108,17 +110,37 @@ def get_catalog(teacher_id: int, import_id: str, import_version: str) -> dict:
                     for question in catalog["questions"]
                 ],
             }
-    raise AppError("CATALOG_NOT_FOUND", "找不到可供此教師存取的題目清單。", 404)
+    raise _catalog_not_found()
 
 
-def _course_teacher(course_id: str) -> int:
-    teacher_id = session.get("teacher_id")
+def _require_course_access(teacher_id: int, course_id: str) -> None:
     _require_teacher(teacher_id)
     check_access = current_app.config.get("NOTES_COURSE_ACCESS")
     if check_access is None:
         raise AppError("NOTES_INTEGRATION_PENDING", "尚未接入課程授權。", 503)
-    if not check_access(teacher_id, course_id):
+    if not isinstance(course_id, str) or not course_id.strip() or not check_access(teacher_id, course_id):
         raise AppError("COURSE_FORBIDDEN", "無法存取這門課程的講義。", 403)
+
+
+def list_course_catalogs(teacher_id: int, course_id: str) -> list[dict]:
+    """List saved versions for the teacher's selected, authorized course."""
+    _require_course_access(teacher_id, course_id)
+    return [_catalog_summary(version_catalog(version)) for version in teacher_versions(teacher_id, course_id)]
+
+
+def get_course_catalog(teacher_id: int, course_id: str, import_id: str, import_version: str) -> dict:
+    """Read one exact version and its display text without disclosing the source or answers."""
+    _require_course_access(teacher_id, course_id)
+    version = find_version(teacher_id, import_id, import_version)
+    if version is None or version["course_id"] != course_id:
+        raise _catalog_not_found()
+    catalog = version_catalog(version, include_text=True)
+    return {key: catalog[key] for key in ("import_id", "import_version", "questions")}
+
+
+def _course_teacher(course_id: str) -> int:
+    teacher_id = session.get("teacher_id")
+    _require_course_access(teacher_id, course_id)
     return teacher_id
 
 
@@ -151,12 +173,8 @@ def _workspace(course_id: str, teacher_id: int, status_code: int = 200, **data):
 @bp.get("/courses/<course_id>")
 @teacher_required
 def workspace(course_id: str):
-    teacher_id = _course_teacher(course_id)
-    summaries = [
-        {**{key: catalog[key] for key in ("import_id", "import_version", "title")},
-         "question_count": len(catalog["questions"])}
-        for catalog in map(version_catalog, teacher_versions(teacher_id, course_id))
-    ]
+    teacher_id = session.get("teacher_id")
+    summaries = list_course_catalogs(teacher_id, course_id)
     return _workspace(course_id, teacher_id, catalogs=summaries)
 
 
@@ -224,8 +242,11 @@ def _writeback(course_id: str, *, confirm: bool):
     if snapshot is None or snapshot.teacher_id != teacher_id or snapshot.activity_id != activity_id:
         raise AppError("ACTIVITY_NOT_FOUND", "找不到可供此教師回填的活動。", 404)
     result = process_writeback(_sheets, snapshot, course_id, preview_id)
-    status_code = {"source_changed": 409, "conflict": 409, "unverified": 502}.get(result["status"], 200)
-    return _workspace(course_id, teacher_id, status_code, writeback_review=result, activity_id=activity_id)
+    data = {"writeback_review": result, "activity_id": activity_id}
+    if result["status"] in _WRITEBACK_ERRORS:
+        status_code, code, message = _WRITEBACK_ERRORS[result["status"]]
+        return _workspace(course_id, teacher_id, status_code, error={"code": code, "message": message}, **data)
+    return _workspace(course_id, teacher_id, **data)
 
 
 @bp.post("/courses/<course_id>/writeback/preview")
