@@ -4,7 +4,7 @@
 <title>Guided Notes 講義</title>
 <main>
   <h1>Guided Notes 講義</h1>
-  <p><a href="{{ url_for('pages.teacher_home') }}">回教師首頁</a></p>
+  <p><a href="{{ url_for('pages.teacher_home') }}">回教師首頁</a> | <a href="{{ url_for('activities.teacher_course', course_id=course_id) }}">回課程頁</a></p>
 
   <h2>匯入</h2>
   <form method="post" action="{{ url_for('notes.import_preview', course_id=course_id) }}">

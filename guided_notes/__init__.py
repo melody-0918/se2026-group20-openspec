@@ -1,9 +1,9 @@
 """Flask application factory for the local Guided Notes quiz project."""
 
-from flask import Flask, jsonify, render_template, request, url_for
+from flask import Flask, jsonify, render_template, request, session, url_for
 from werkzeug.exceptions import HTTPException
 
-from .activities import bp as activities_bp
+from .activities import bp as activities_bp, notes_course_access
 from .auth import bp as auth_bp
 from .config import load_config
 from .db import init_app as init_db_app
@@ -18,6 +18,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.config.update(load_config())
     if test_config:
         app.config.update(test_config)
+    app.config.setdefault("NOTES_COURSE_ACCESS", notes_course_access)
 
     init_db_app(app)
     app.register_blueprint(pages_bp)
@@ -30,12 +31,30 @@ def create_app(test_config: dict | None = None) -> Flask:
     def handle_app_error(error: AppError):
         is_api = request.path.startswith("/api/") or "/api/" in request.path
         is_activities_page = (request.endpoint or "").startswith("activities.") and not is_api
-        if is_api or not is_activities_page:
+        is_notes_page = (request.endpoint or "").startswith("notes.") and not is_api
+        is_notes_json_request = is_notes_page and (
+            request.is_json or request.accept_mimetypes.best == "application/json"
+        )
+        if is_api or is_notes_json_request or not (is_activities_page or is_notes_page):
             return jsonify({"error": {"code": error.code, "message": error.message}}), error.status_code
 
         endpoint = request.endpoint or ""
         view_args = request.view_args or {}
-        if endpoint in {"activities.student_join", "activities.student_join_page", "activities.student_page"}:
+        if is_notes_page:
+            course_id = view_args.get("course_id")
+            if error.code == "COURSE_FORBIDDEN":
+                return_url = url_for("activities.teacher_courses")
+                return_label = "返回課程列表"
+            else:
+                course_access = app.config.get("NOTES_COURSE_ACCESS")
+                teacher_id = session.get("teacher_id")
+                if course_id and teacher_id is not None and callable(course_access) and course_access(teacher_id, course_id):
+                    return_url = url_for("notes.workspace", course_id=course_id)
+                    return_label = "返回課程講義管理頁"
+                else:
+                    return_url = url_for("activities.teacher_courses")
+                    return_label = "返回課程列表"
+        elif endpoint in {"activities.student_join", "activities.student_join_page", "activities.student_page"}:
             return_url = url_for("activities.student_join_page")
             return_label = "返回學生加入頁"
         elif endpoint in {"activities.teacher_courses", "activities.teacher_create_course"}:
