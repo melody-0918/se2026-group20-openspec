@@ -35,7 +35,8 @@
 ## Verification Notes
 
 - 自動測試用 SQLite 測試資料庫及 Sheets、Desktop OAuth 瀏覽器、課程授權與結算替身。正式清單的測試關閉示範旗標，另外執行既有 Foundation 示範回歸測試。
-- 1.1、3.3、4.1 仍待 B 正式接入及驗收。D15、D19 與勝組規則已依共同需求定案，A 的課程查詢、文字 DTO、快照及錯誤契約見設計。
+- 1.1、3.3、4.1 的整合檢查比較了 `feat/notes`（`c9386a8`）、`origin/main`（`f7dd87a`）與 `origin/feat/quiz-submission-results`（`fcad508`）。`origin/main` 已有 `connect-notes-course-catalogs` 的正式課程授權及清單選用，尚待納入 `feat/notes`。Quiz 遠端參照已是 main 的歷史提交，兩個遠端參照的 Quiz 皆為占位，仍待正式結算 provider 和 D19 學生端接入。
+- A 側以 Activities 實際建立與結束的活動核對課程、教師、歷史活動與固定版本。測試涵蓋拒絕跨課程、未結束、未結算及新版冒用，也確認關課歷史活動仍使用原版本與同一勝組。`feat/notes` 的 82 項測試通過。另在 `origin/main` 的暫存快照套入 Notes 變更，並讓兩邊重疊的瀏覽器測試改用實際的測試活動識別，86 項測試通過。結算 provider 與 Sheets 使用測試替身，正式接入及兩組學生操作仍未驗收。
 - 先前使用者回報以老師的一份混合範本副本完成 Desktop OAuth、匯入 4 題／6 個答案格（2 個題組、2 個單題）、HTTP 200 預覽、SQLite 版本 1、2 精確讀回、6 格實際回填 verified 及獨立 API 回讀。非目標格、題號、標號及合併範圍均保持原樣。回填使用人工 `EndedSnapshot`。
 
 ### Task 5.1 人工驗收紀錄

@@ -46,6 +46,18 @@ def find_version(teacher_id: int, import_id: str, version: str):
     ).fetchone()
 
 
+def find_writeback_activity(teacher_id: int, course_id: str, activity_id: str):
+    """Read the activity's frozen version and phase through its owning course."""
+    return get_db().execute(
+        """SELECT a.import_id, a.import_version, a.status
+           FROM activities AS a
+           JOIN classrooms AS cl ON cl.id = a.classroom_id
+           JOIN courses AS c ON c.id = cl.course_id
+           WHERE a.id = ? AND c.id = ? AND c.teacher_id = ?""",
+        (activity_id, course_id, teacher_id),
+    ).fetchone()
+
+
 def create_import_preview(teacher_id: int, course_id: str, spreadsheet_id: str, sheet_id: int,
                           title: str, layout: list[dict]) -> str:
     preview_id = uuid4().hex

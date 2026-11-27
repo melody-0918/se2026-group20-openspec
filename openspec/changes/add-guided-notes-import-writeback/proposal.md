@@ -19,7 +19,7 @@
 ### 待確認
 
 - **D17，暫採 SpecKit 建議值**　沿用來源分頁名稱或自訂講義名稱，顯示來源資訊；多分頁逐一選擇、預覽與保存。
-- **B 正式接入 D15、D19**　A 已提供課程範圍的清單及精確版本入口。B 須接入課程授權、用所選課程再次驗證版本並固定在活動上，使用固定版本的文字做學生端顯示。具體接入和跨模組驗收仍待完成。
+- **B 正式接入 D15、D19**　`origin/main` 已接入課程授權、正式課程清單選用及固定版本，尚待納入 `feat/notes`。A 已提供課程範圍的清單及精確版本入口。B 仍須使用固定版本的文字做學生端顯示並完成跨模組驗收。
 - **B 正式接入結算**　共同需求已定義 `get_ended_snapshot()` 的已結束且已結算條件與 `RESULT_NOT_READY`。A 的本地 DTO 及錯誤轉接見設計，待 B 實作有權教師的歷史活動查詢、快照轉接並重驗。D13 的活動限制由 B 負責。
 
 以 2026-11-26 共同需求紀錄及格式契約為對齊基準。D19 的文字交付依共同需求，表頭、題號及答案定位依 Format Contract v1。參照 [共同需求](https://github.com/Afra0704/se2026-group20-speckit/blob/master/docs/shared-requirements.md)、[Guided Notes 格式契約](https://github.com/Afra0704/se2026-group20-speckit/blob/master/specs/001-guided-notes/contracts/format.md)、[專案設定](../../config.yaml)、[Explore 紀錄](../../../docs/explore-notes.md)。

@@ -8,6 +8,9 @@ from google.auth.exceptions import RefreshError
 from googleapiclient.errors import HttpError
 from httplib2 import Response
 
+from guided_notes.activities import (
+    add_course_catalog, close_classroom, create_activity, create_classroom, end_activity, list_courses, start_activity,
+)
 from guided_notes.db import get_db
 from guided_notes.errors import AppError
 from guided_notes.notes import get_catalog, get_course_catalog, list_available_catalogs, list_course_catalogs
@@ -80,15 +83,19 @@ def notes_case(app, client):
         other_id = db.execute(
             "INSERT INTO teachers (username, password_hash) VALUES (?, ?)", ("second", "fixture")
         ).lastrowid
+        db.executemany("INSERT INTO courses (id, teacher_id, name) VALUES (?, ?, ?)", [
+            ("course", teacher_id, "第一課程"), ("another", teacher_id, "第二課程"),
+            ("other", other_id, "另一位教師的課程"),
+        ])
     with client.session_transaction() as session:
         session.update(teacher_id=teacher_id, csrf_token="notes-fixture")
     sheets = FakeSheets()
     app.config.update(
         DEMO_CATALOG=False,
         NOTES_SHEETS_FACTORY=lambda: sheets,
-        NOTES_COURSE_ACCESS=lambda actor, course: (
-            (actor == teacher_id and course in {"course", "another"}) or (actor == other_id and course == "other")
-        ),
+        NOTES_COURSE_ACCESS=app.config.get("NOTES_COURSE_ACCESS", lambda actor, course: any(
+            owned["id"] == course for owned in list_courses(actor)
+        )),
     )
     return teacher_id, other_id, sheets
 
@@ -102,9 +109,18 @@ def _save(client, course="course"):
     return _post(client, "import/save", course, preview_id=preview["preview_id"]).json["saved_version"]
 
 
-def _snapshot(teacher_id, version):
+def _snapshot(app, teacher_id, version, *, ended=True, close=False):
+    with app.app_context():
+        add_course_catalog(teacher_id, "course", **version)
+        classroom_id = create_classroom(teacher_id, "course", "回填測試課堂")
+        activity_id = create_activity(teacher_id, classroom_id, **version)
+        start_activity(teacher_id, classroom_id, activity_id)
+        if close:
+            close_classroom(teacher_id, classroom_id)
+        elif ended:
+            end_activity(teacher_id, classroom_id, activity_id)
     return EndedSnapshot(
-        "event", teacher_id, version["import_id"], version["import_version"], True, True,
+        activity_id, teacher_id, version["import_id"], version["import_version"], True, True,
         (
             QuestionResult("q-1", None),
             QuestionResult("q-3", "winner", (
@@ -359,65 +375,65 @@ def test_failed_save_rolls_back_version(app, client, notes_case):
 def test_writeback_reconfirms_moved_source_and_only_writes_winner(app, client, notes_case):
     teacher_id, _, sheets = notes_case
     version = _save(client)
-    snapshot = _snapshot(teacher_id, version)
+    snapshot = _snapshot(app, teacher_id, version)
     app.config["NOTES_ENDED_SNAPSHOT"] = lambda *_: snapshot
-    review = _post(client, "writeback/preview", activity_id="event").json["writeback_review"]
+    review = _post(client, "writeback/preview", activity_id=snapshot.activity_id).json["writeback_review"]
     assert not sheets.writes
     sheets.grid = _layout(5, 3)
-    changed = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
+    changed = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
     assert changed.status_code == 409
     assert changed.json["error"]["code"] == "SOURCE_PREVIEW_STALE"
     recheck = changed.json["writeback_review"]
     assert recheck["status"] == "source_changed" and not sheets.writes
-    stale = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
+    stale = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
     assert (stale.status_code, stale.json["error"]["code"]) == (409, "SOURCE_PREVIEW_STALE")
-    confirmed = _post(client, "writeback/confirm", activity_id="event", preview_id=recheck["preview_id"])
+    confirmed = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=recheck["preview_id"])
     result = confirmed.json["writeback_review"]
     assert result["status"] == "verified" and result["skipped_count"] == 1
     assert sheets.writes == [[(7, 7, "(2)"), (8, 7, "=literal")]]
     assert sheets.grid.text(7, 6) == "（1）"
     assert not sheets.grid.entered(6, 6)
-    assert _post(client, "writeback/confirm", activity_id="event", preview_id=recheck["preview_id"]).status_code == 200
+    assert _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=recheck["preview_id"]).status_code == 200
     assert len(sheets.writes) == 1
 
 
 def test_writeback_partial_failure_then_safe_retry(app, client, notes_case):
     teacher_id, _, sheets = notes_case
     app.config["NOTES_ENDED_SNAPSHOT"] = lambda *_: snapshot
-    snapshot = _snapshot(teacher_id, _save(client))
-    review = _post(client, "writeback/preview", activity_id="event").json["writeback_review"]
+    snapshot = _snapshot(app, teacher_id, _save(client))
+    review = _post(client, "writeback/preview", activity_id=snapshot.activity_id).json["writeback_review"]
     sheets.mode = "partial"
-    partial = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
+    partial = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
     assert partial.status_code == 502
     assert partial.json["error"]["code"] == "SHEETS_WRITE_UNVERIFIED"
     assert [target["status"] for target in partial.json["writeback_review"]["targets"]] == ["verified", "unverified"]
     sheets.mode = "normal"
-    retried = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
+    retried = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
     assert retried.json["writeback_review"]["status"] == "verified"
     assert sheets.writes[-1] == [(3, 4, "=literal")]
 
 
 def test_writeback_readback_conflict_wont_overwrite_on_retry(app, client, notes_case):
     teacher_id, _, sheets = notes_case
-    snapshot = _snapshot(teacher_id, _save(client))
+    snapshot = _snapshot(app, teacher_id, _save(client))
     app.config["NOTES_ENDED_SNAPSHOT"] = lambda *_: snapshot
-    review = _post(client, "writeback/preview", activity_id="event").json["writeback_review"]
+    review = _post(client, "writeback/preview", activity_id=snapshot.activity_id).json["writeback_review"]
     sheets.mode = "mismatch"
-    first = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
+    first = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
     assert first.status_code == 409 and first.json["writeback_review"]["status"] == "conflict"
     assert first.json["error"]["code"] == "WRITEBACK_CONFLICT"
-    retry = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
+    retry = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
     assert retry.status_code == 409 and len(sheets.writes) == 1
 
 
 def test_writeback_does_not_rewrite_a_verified_cell_cleared_by_a_teacher(app, client, notes_case):
     teacher_id, _, sheets = notes_case
-    snapshot = _snapshot(teacher_id, _save(client))
+    snapshot = _snapshot(app, teacher_id, _save(client))
     app.config["NOTES_ENDED_SNAPSHOT"] = lambda *_: snapshot
-    review = _post(client, "writeback/preview", activity_id="event").json["writeback_review"]
-    assert _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"]).status_code == 200
+    review = _post(client, "writeback/preview", activity_id=snapshot.activity_id).json["writeback_review"]
+    assert _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"]).status_code == 200
     del sheets.grid.cells[2, 4]
-    retry = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
+    retry = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
     assert retry.status_code == 409
     assert [item["status"] for item in retry.json["writeback_review"]["targets"]] == ["conflict", "verified"]
     assert len(sheets.writes) == 1
@@ -425,30 +441,30 @@ def test_writeback_does_not_rewrite_a_verified_cell_cleared_by_a_teacher(app, cl
 
 def test_writeback_lost_readback_reports_auth_and_rechecks_without_rewrite(app, client, notes_case):
     teacher_id, _, sheets = notes_case
-    snapshot = _snapshot(teacher_id, _save(client))
+    snapshot = _snapshot(app, teacher_id, _save(client))
     app.config["NOTES_ENDED_SNAPSHOT"] = lambda *_: snapshot
-    review = _post(client, "writeback/preview", activity_id="event").json["writeback_review"]
+    review = _post(client, "writeback/preview", activity_id=snapshot.activity_id).json["writeback_review"]
     sheets.mode = "readback_auth"
-    first = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
+    first = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
     result = first.json["writeback_review"]
     assert (first.status_code, result["status"], result["issue"]["code"]) == (502, "unverified", "SHEETS_AUTH_REQUIRED")
     assert first.json["error"]["code"] == "SHEETS_WRITE_UNVERIFIED"
     sheets.mode = "normal"
-    retry = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
+    retry = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
     assert retry.json["writeback_review"]["status"] == "verified"
     assert len(sheets.writes) == 1
 
 
 def test_writeback_repreviews_edited_old_value_and_rejects_new_question(app, client, notes_case):
     teacher_id, _, sheets = notes_case
-    snapshot = _snapshot(teacher_id, _save(client))
+    snapshot = _snapshot(app, teacher_id, _save(client))
     app.config["NOTES_ENDED_SNAPSHOT"] = lambda *_: snapshot
-    review = _post(client, "writeback/preview", activity_id="event").json["writeback_review"]
+    review = _post(client, "writeback/preview", activity_id=snapshot.activity_id).json["writeback_review"]
     sheets.grid.cells[2, 4] = _cell("教師剛編輯")
-    changed = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
+    changed = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
     assert changed.json["writeback_review"]["targets"][0]["original_display"] == "教師剛編輯"
     sheets.grid.cells[1, 0] = _cell("7")
-    denied = _post(client, "writeback/confirm", activity_id="event",
+    denied = _post(client, "writeback/confirm", activity_id=snapshot.activity_id,
                    preview_id=changed.json["writeback_review"]["preview_id"])
     assert denied.json["error"]["code"] == "SOURCE_REIMPORT_REQUIRED" and not sheets.writes
 
@@ -456,11 +472,11 @@ def test_writeback_repreviews_edited_old_value_and_rejects_new_question(app, cli
 def test_writeback_repreviews_changed_display_without_writing(app, client, notes_case):
     teacher_id, _, sheets = notes_case
     sheets.grid.cells[2, 4] = {"userEnteredValue": {"formulaValue": "=A1"}, "formattedValue": "之前"}
-    snapshot = _snapshot(teacher_id, _save(client))
+    snapshot = _snapshot(app, teacher_id, _save(client))
     app.config["NOTES_ENDED_SNAPSHOT"] = lambda *_: snapshot
-    review = _post(client, "writeback/preview", activity_id="event").json["writeback_review"]
+    review = _post(client, "writeback/preview", activity_id=snapshot.activity_id).json["writeback_review"]
     sheets.grid.cells[2, 4]["formattedValue"] = "現在"
-    changed = _post(client, "writeback/confirm", activity_id="event", preview_id=review["preview_id"])
+    changed = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
     assert changed.status_code == 409 and changed.json["writeback_review"]["status"] == "source_changed"
     assert changed.json["writeback_review"]["targets"][0]["original_display"] == "現在"
     assert not sheets.writes
@@ -472,11 +488,15 @@ def test_writeback_repreviews_changed_display_without_writing(app, client, notes
     ("unknown_question", "RESULT_CATALOG_MISMATCH"), ("unknown_item", "RESULT_CATALOG_MISMATCH"),
     ("duplicate_item", "RESULT_CATALOG_MISMATCH"), ("missing_item", "RESULT_CATALOG_MISMATCH"),
     ("other_teacher", "ACTIVITY_NOT_FOUND"), ("integration", "NOTES_INTEGRATION_PENDING"),
-    ("empty_winner", "RESULT_CATALOG_MISMATCH"), ("other_course", "RESULT_CATALOG_MISMATCH"),
+    ("empty_winner", "RESULT_CATALOG_MISMATCH"), ("other_course", "ACTIVITY_NOT_FOUND"),
+    ("unknown_activity", "ACTIVITY_NOT_FOUND"), ("foreign_course", "COURSE_FORBIDDEN"),
+    ("active_activity", "RESULT_NOT_READY"), ("invalid_dto", "RESULT_CATALOG_MISMATCH"),
+    ("provider_not_ready", "RESULT_NOT_READY"),
 ])
 def test_invalid_settlement_does_not_reach_google(app, client, notes_case, defect, error_code):
     teacher_id, other_id, sheets = notes_case
-    snapshot = _snapshot(teacher_id, _save(client))
+    snapshot = _snapshot(app, teacher_id, _save(client), ended=defect != "active_activity")
+    activity_id = snapshot.activity_id
     first, group = snapshot.questions
     bad = {
         "pending": replace(snapshot, settled=False), "not_closed": replace(snapshot, closed=False),
@@ -484,7 +504,7 @@ def test_invalid_settlement_does_not_reach_google(app, client, notes_case, defec
         "unknown_question": replace(snapshot, questions=(first, replace(group, question_id="bad"))),
         "other_teacher": replace(snapshot, teacher_id=other_id),
         "empty_winner": replace(snapshot, questions=(first, replace(group, winner_id=""))),
-        "other_course": snapshot,
+        "invalid_dto": {"activity_id": activity_id},
     }
     bad_items = {
         "unknown_item": (group.answers[0], Answer("bad-item", "x")),
@@ -492,13 +512,51 @@ def test_invalid_settlement_does_not_reach_google(app, client, notes_case, defec
         "missing_item": (group.answers[0],),
     }
     if defect != "integration":
-        snapshot = (replace(snapshot, questions=(first, replace(group, answers=bad_items[defect])))
-                    if defect in bad_items else bad[defect])
-        app.config["NOTES_ENDED_SNAPSHOT"] = lambda *_: snapshot
+        returned = (replace(snapshot, questions=(first, replace(group, answers=bad_items[defect])))
+                    if defect in bad_items else bad.get(defect, snapshot))
+        provider = Mock(return_value=returned)
+        if defect == "provider_not_ready":
+            provider.side_effect = AppError("RESULT_NOT_READY", "結算未完成。", 409)
+        app.config["NOTES_ENDED_SNAPSHOT"] = provider
     reads_before = list(sheets.reads)
-    course = "another" if defect == "other_course" else "course"
-    assert _post(client, "writeback/preview", course, activity_id="event").json["error"]["code"] == error_code
+    course = {"other_course": "another", "foreign_course": "other"}.get(defect, "course")
+    requested_activity = "missing" if defect == "unknown_activity" else activity_id
+    response = _post(client, "writeback/preview", course, activity_id=requested_activity)
+    assert response.json["error"]["code"] == error_code
     assert sheets.reads == reads_before and not sheets.writes
+    if defect in {"other_course", "unknown_activity", "foreign_course", "active_activity"}:
+        provider.assert_not_called()
+
+
+def test_writeback_keeps_historical_activity_version_and_winner(app, client, notes_case):
+    teacher_id, _, sheets = notes_case
+    first_version = _save(client)
+    snapshot = _snapshot(app, teacher_id, first_version, close=True)
+    newer = _save(client)
+    assert newer == {**first_version, "import_version": "2"}
+    provider = Mock(return_value=replace(snapshot, import_version=newer["import_version"]))
+    app.config["NOTES_ENDED_SNAPSHOT"] = provider
+    reads_before = list(sheets.reads)
+    response = _post(client, "writeback/preview", activity_id=snapshot.activity_id)
+    assert (response.status_code, response.json["error"]["code"]) == (409, "RESULT_CATALOG_MISMATCH")
+    provider.assert_called_once_with(teacher_id, snapshot.activity_id)
+    assert sheets.reads == reads_before and not sheets.writes
+
+    provider.return_value = snapshot
+    response = _post(client, "writeback/preview", activity_id=snapshot.activity_id)
+    review = response.json["writeback_review"]
+    assert review["status"] == "preview" and review["skipped_count"] == 1
+    first, group = snapshot.questions
+    provider.return_value = replace(snapshot, questions=(first, replace(group, winner_id="different-winner")))
+    reads_before = list(sheets.reads)
+    response = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
+    assert (response.status_code, response.json["error"]["code"]) == (409, "RESULT_CATALOG_MISMATCH")
+    assert sheets.reads == reads_before and not sheets.writes
+
+    provider.return_value = snapshot
+    response = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
+    assert response.json["writeback_review"]["status"] == "verified"
+    assert sheets.writes == [[(2, 4, "(2)"), (3, 4, "=literal")]]
 
 
 def test_source_url_parser():
