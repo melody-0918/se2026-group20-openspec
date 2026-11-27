@@ -34,7 +34,7 @@ def test_factory_registers_all_blueprints_and_pages(client, app):
     assert {"notes", "activities", "quiz"}.issubset(app.blueprints)
     assert "教師登入" in client.get("/").get_data(as_text=True)
     assert "學生加入" in client.get("/").get_data(as_text=True)
-    assert "尚未開放" in client.get("/").get_data(as_text=True)
+    assert 'href="/activities/join"' in client.get("/").get_data(as_text=True)
     assert client.get("/notes/").status_code == 200
     assert client.get("/activities/").status_code == 200
     assert client.get("/quiz/").status_code == 200

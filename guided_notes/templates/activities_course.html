@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><title>{{ course.name }}</title></head>
+<body><main><h1>{{ course.name }}</h1>
+<h2>加入題目清單</h2><ul>{% for item in catalogs %}<li>{{ item.title }}（版本 {{ item.import_version }}，{{ item.question_count }} 題）</li>{% else %}<li>尚未加入清單</li>{% endfor %}</ul>
+<form method="post" action="{{ url_for('activities.teacher_add_catalog', course_id=course.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>可用清單 <select name="catalog_key" required>{% for item in available %}<option value="{{ item.import_id }}|{{ item.import_version }}">{{ item.title }}（{{ item.import_version }}）</option>{% endfor %}</select></label><button name="_add_catalog" value="1">加入清單</button></form>
+<h2>課堂</h2><ul>{% for classroom in classrooms %}<li><a href="{{ url_for('activities.teacher_classroom', classroom_id=classroom.id) }}">{{ classroom.name }}</a>（{{ '進行中' if classroom.status == 'open' else '已結束' }}）</li>{% else %}<li>尚無課堂</li>{% endfor %}</ul>
+<form method="post" action="{{ url_for('activities.teacher_create_classroom', course_id=course.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>課堂名稱 <input name="name" required maxlength="100"></label><button>建立課堂</button></form><p><a href="{{ url_for('activities.teacher_courses') }}">回課程列表</a></p></main>
+<script>
+document.querySelector('form[action$="/catalogs"]').addEventListener('submit', function () {
+  const selected = this.querySelector('[name="catalog_key"]').value.split('|');
+  this.querySelector('[name="import_id"]')?.remove(); this.querySelector('[name="import_version"]')?.remove();
+  for (const [name, value] of [['import_id', selected[0]], ['import_version', selected[1]]]) { const input=document.createElement('input'); input.type='hidden'; input.name=name; input.value=value; this.append(input); }
+});
+</script></body></html>

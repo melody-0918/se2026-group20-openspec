@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><title>{{ classroom.name }}</title></head>
+<body><main><h1>{{ classroom.name }}</h1><p>加入碼：<strong>{{ classroom.join_code }}</strong></p><p>狀態：<span id="classroom-status">{{ '進行中' if classroom.status == 'open' else '已結束' }}</span></p>
+<h2>已加入組別</h2><ul>{% for team in classroom.teams %}<li>{{ team.name }}</li>{% else %}<li>尚無組別</li>{% endfor %}</ul>
+<h2>活動</h2><ul>{% for activity in classroom.activities %}<li><strong>{{ activity.title }}</strong>（{{ {'preparing':'準備中','active':'搶答中','ended':'已結束'}[activity.status] }}；題號：{{ activity.question_numbers|join('、') }}）
+{% if classroom.status == 'open' %}<form method="post" action="{{ url_for('activities.teacher_transition_activity', classroom_id=classroom.id, activity_id=activity.id, action='start') }}" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button {% if activity.status != 'preparing' %}disabled{% endif %}>開始</button></form>
+<form method="post" action="{{ url_for('activities.teacher_transition_activity', classroom_id=classroom.id, activity_id=activity.id, action='end') }}" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button {% if activity.status != 'active' %}disabled{% endif %}>結束</button></form>{% endif %}</li>{% else %}<li>尚無活動</li>{% endfor %}</ul>
+{% if classroom.status == 'open' %}<h2>建立活動</h2><form method="post" action="{{ url_for('activities.teacher_create_activity', classroom_id=classroom.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>題目清單 <select name="catalog_key" required>{% for item in catalogs %}<option value="{{ item.import_id }}|{{ item.import_version }}">{{ item.title }}（{{ item.import_version }}）</option>{% endfor %}</select></label><label>活動名稱（可留空） <input name="title" maxlength="100"></label><input type="hidden" name="import_id"><input type="hidden" name="import_version"><button>建立</button></form>
+<form method="post" action="{{ url_for('activities.teacher_close_classroom', classroom_id=classroom.id) }}" onsubmit="return confirm('確定關閉課堂？');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button>關閉課堂</button></form>{% endif %}
+<p><a href="{{ url_for('activities.teacher_course', course_id=classroom.course_id) }}">回課程</a></p></main>
+<script>
+document.querySelectorAll('form[action$="/activities"]').forEach(function(form){form.addEventListener('submit',function(){const s=this.querySelector('[name="catalog_key"]').value.split('|');this.querySelector('[name="import_id"]').value=s[0];this.querySelector('[name="import_version"]').value=s[1];});});
+let version={{ classroom.state_version }};
+setInterval(async()=>{try{const r=await fetch({{ url_for('activities.teacher_state_api', classroom_id=classroom.id)|tojson }},{cache:'no-store'});if(r.ok){const d=await r.json();if(d.state_version>version)location.reload();}}catch(_){ }},1000);
+</script></body></html>

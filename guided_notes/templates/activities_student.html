@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><title>學生課堂</title></head>
+<body><main><h1>學生課堂</h1><p>課堂：<span id="classroom-name">{{ state.classroom_name }}</span></p><p>組別：<span id="team-name">{{ state.team_name }}</span></p><p id="classroom-ended" {% if not state.classroom_ended %}hidden{% endif %}>課堂已結束</p>
+<section id="activity" {% if not state.activity %}hidden{% endif %}><h2 id="activity-name">{{ state.activity.name if state.activity else '' }}</h2><p>階段：<span id="activity-phase">{{ {'preparing':'準備中','active':'搶答中','ended':'已結束'}[state.activity.phase] if state.activity else '' }}</span></p><p>題號：<span id="question-numbers">{{ state.activity.question_numbers|join('、') if state.activity else '' }}</span></p></section><p id="waiting" {% if state.activity %}hidden{% endif %}>等候教師開始活動</p></main>
+<script>
+let appliedVersion={{ state.state_version }};
+const labels={preparing:'準備中',active:'搶答中',ended:'已結束'};
+async function refresh(){try{const response=await fetch({{ url_for('activities.student_state_api')|tojson }},{cache:'no-store'});if(!response.ok)return;const s=await response.json();if(s.state_version<=appliedVersion)return;appliedVersion=s.state_version;
+document.getElementById('classroom-name').textContent=s.classroom_name;document.getElementById('team-name').textContent=s.team_name;document.getElementById('classroom-ended').hidden=!s.classroom_ended;
+const activity=s.activity;document.getElementById('activity').hidden=!activity;document.getElementById('waiting').hidden=!!activity||s.classroom_ended;
+if(activity){document.getElementById('activity-name').textContent=activity.name;document.getElementById('activity-phase').textContent=labels[activity.phase]||activity.phase;document.getElementById('question-numbers').textContent=activity.question_numbers.join('、');}
+}catch(_){}}
+setInterval(refresh,1000);
+</script></body></html>

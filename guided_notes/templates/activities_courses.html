@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><title>我的課程</title></head>
+<body><main><h1>我的課程</h1>
+<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>課程名稱 <input name="name" required maxlength="100"></label><button>建立課程</button></form>
+<ul>{% for course in courses %}<li><a href="{{ url_for('activities.teacher_course', course_id=course.id) }}">{{ course.name }}</a></li>{% else %}<li>尚無課程</li>{% endfor %}</ul>
+<a href="{{ url_for('pages.teacher_home') }}">教師首頁</a></main></body></html>
