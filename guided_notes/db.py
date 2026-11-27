@@ -87,6 +87,41 @@ CREATE TABLE IF NOT EXISTS activity_questions (
     PRIMARY KEY (activity_id, question_id),
     UNIQUE (activity_id, question_order)
 );
+
+CREATE TABLE IF NOT EXISTS notes_versions (
+    import_id TEXT NOT NULL,
+    import_version INTEGER NOT NULL,
+    teacher_id INTEGER NOT NULL REFERENCES teachers(id),
+    course_id TEXT NOT NULL,
+    spreadsheet_id TEXT NOT NULL,
+    sheet_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    layout TEXT NOT NULL,
+    PRIMARY KEY (import_id, import_version)
+);
+CREATE INDEX IF NOT EXISTS notes_versions_teacher ON notes_versions (teacher_id, course_id, spreadsheet_id, sheet_id);
+
+CREATE TABLE IF NOT EXISTS notes_import_previews (
+    id TEXT PRIMARY KEY,
+    teacher_id INTEGER NOT NULL REFERENCES teachers(id),
+    course_id TEXT NOT NULL,
+    spreadsheet_id TEXT NOT NULL,
+    sheet_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    layout TEXT NOT NULL,
+    import_id TEXT,
+    import_version INTEGER,
+    FOREIGN KEY (import_id, import_version) REFERENCES notes_versions (import_id, import_version)
+);
+
+CREATE TABLE IF NOT EXISTS notes_writeback_plans (
+    teacher_id INTEGER NOT NULL REFERENCES teachers(id),
+    activity_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    data TEXT NOT NULL,
+    attempted INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (teacher_id, activity_id)
+);
 """
 
 SCHEMA_VERSION = 1
