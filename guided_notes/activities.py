@@ -192,11 +192,14 @@ def _proof(connection: sqlite3.Connection, token: str | None):
 
 
 def _selected_activity(connection: sqlite3.Connection, classroom_id: str):
+    # Preparing rows use created_at, then SQLite's implicit rowid. Activities are
+    # append-only (there is no delete operation), so rowid preserves insert order
+    # when several activities share the same second-precision created_at value.
     return connection.execute(
         """SELECT * FROM activities WHERE classroom_id = ?
            ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'preparing' THEN 1 ELSE 2 END,
                     CASE status WHEN 'preparing' THEN created_at END DESC,
-                    CASE status WHEN 'ended' THEN ended_at END DESC,
+                    CASE status WHEN 'ended' THEN ended_seq END DESC,
                     rowid DESC LIMIT 1""",
         (classroom_id,),
     ).fetchone()
@@ -277,11 +280,18 @@ def _transition_activity(teacher_id: int, classroom_id: str, activity_id: str, t
             if connection.execute("SELECT 1 FROM activities WHERE classroom_id = ? AND status = 'active'", (classroom_id,)).fetchone():
                 raise AppError("ACTIVITY_ALREADY_ACTIVE", "此課堂已有搶答中的活動。", 409)
             connection.execute("UPDATE activities SET status='active', started_at=CURRENT_TIMESTAMP WHERE id=?", (activity_id,))
+            connection.execute("UPDATE classrooms SET state_version = state_version + 1 WHERE id = ?", (classroom_id,))
         else:
             if activity["status"] != "active":
                 raise AppError("ACTIVITY_NOT_ACTIVE", "只有搶答中的活動可以結束。", 409)
-            connection.execute("UPDATE activities SET status='ended', ended_at=CURRENT_TIMESTAMP WHERE id=?", (activity_id,))
-        connection.execute("UPDATE classrooms SET state_version = state_version + 1 WHERE id = ?", (classroom_id,))
+            connection.execute("UPDATE classrooms SET state_version = state_version + 1 WHERE id = ?", (classroom_id,))
+            end_sequence = connection.execute(
+                "SELECT state_version FROM classrooms WHERE id = ?", (classroom_id,)
+            ).fetchone()[0]
+            connection.execute(
+                "UPDATE activities SET status='ended', ended_at=CURRENT_TIMESTAMP, ended_seq=? WHERE id=?",
+                (end_sequence, activity_id),
+            )
 
 
 def start_activity(teacher_id: int, classroom_id: str, activity_id: str) -> None:
@@ -299,8 +309,14 @@ def close_classroom(teacher_id: int, classroom_id: str) -> None:
         classroom = _owned_classroom(connection, classroom_id, teacher_id)
         if classroom["status"] == "closed":
             return
-        connection.execute("UPDATE activities SET status='ended', ended_at=CURRENT_TIMESTAMP WHERE classroom_id=? AND status='active'", (classroom_id,))
         connection.execute("UPDATE classrooms SET status='closed', closed_at=CURRENT_TIMESTAMP, state_version=state_version+1 WHERE id=?", (classroom_id,))
+        end_sequence = connection.execute(
+            "SELECT state_version FROM classrooms WHERE id = ?", (classroom_id,)
+        ).fetchone()[0]
+        connection.execute(
+            "UPDATE activities SET status='ended', ended_at=CURRENT_TIMESTAMP, ended_seq=? WHERE classroom_id=? AND status='active'",
+            (end_sequence, classroom_id),
+        )
 
 
 def assert_submission_eligible(connection: sqlite3.Connection, classroom_id: str, activity_id: str,

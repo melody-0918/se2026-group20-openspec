@@ -118,6 +118,7 @@ def test_activity_snapshot_state_order_close_and_quiz_eligibility(app):
         assert state["classroom_ended"] is True
         assert state["activity"]["id"] == second
         assert state["activity"]["phase"] == "ended"
+        assert get_db().execute("SELECT ended_seq FROM activities WHERE id=?", (second,)).fetchone()[0] is not None
         assert set(state) == {"classroom_name", "team_name", "classroom_status", "classroom_ended", "activity", "state_version"}
         with pytest.raises(AppError) as err:
             activities.create_activity(owner, classroom, "demo-guided-notes", "1")
@@ -139,6 +140,32 @@ def test_preparing_activity_precedes_recently_ended(app):
         activities.end_activity(owner, classroom, ended)
         preparing = activities.create_activity(owner, classroom, "demo-guided-notes", "1", "preparing")
         assert activities.student_state(token)["activity"]["id"] == preparing
+
+
+def test_latest_ended_activity_uses_end_sequence_when_timestamps_match(app):
+    owner = teacher(app, "teacher")
+    _, classroom, code = setup_catalog(app, owner)
+    with app.app_context():
+        token, _ = activities.join_classroom(code, "Alpha")
+        activity_a = activities.create_activity(owner, classroom, "demo-guided-notes", "1", "A")
+        activity_b = activities.create_activity(owner, classroom, "demo-guided-notes", "1", "B")
+
+        activities.start_activity(owner, classroom, activity_b)
+        activities.end_activity(owner, classroom, activity_b)
+        activities.start_activity(owner, classroom, activity_a)
+        activities.end_activity(owner, classroom, activity_a)
+
+        # Force the timestamp collision that previously let rowid choose B.
+        get_db().execute(
+            "UPDATE activities SET ended_at='2026-01-01 12:00:00' WHERE id IN (?, ?)",
+            (activity_a, activity_b),
+        )
+        rows = get_db().execute(
+            "SELECT id, ended_seq FROM activities WHERE id IN (?, ?)", (activity_a, activity_b)
+        ).fetchall()
+        sequences = {row["id"]: row["ended_seq"] for row in rows}
+        assert sequences[activity_a] > sequences[activity_b]
+        assert activities.student_state(token)["activity"]["id"] == activity_a
 
 
 def test_active_activity_precedes_newer_preparing_activity(app):

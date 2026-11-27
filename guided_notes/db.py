@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS activities (
     status TEXT NOT NULL DEFAULT 'preparing' CHECK (status IN ('preparing', 'active', 'ended')),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     started_at TEXT,
-    ended_at TEXT
+    ended_at TEXT,
+    ended_seq INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_activities_classroom ON activities(classroom_id, created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_activity_per_classroom
@@ -153,6 +154,7 @@ def init_db() -> None:
     connection = connect_db()
     try:
         connection.executescript(SCHEMA)
+        _ensure_activity_end_sequence(connection)
         connection.execute("CREATE TABLE IF NOT EXISTS schema_meta (version INTEGER NOT NULL)")
         connection.execute(
             "INSERT INTO schema_meta(version) SELECT ? WHERE NOT EXISTS (SELECT 1 FROM schema_meta)",
@@ -161,6 +163,38 @@ def init_db() -> None:
         connection.commit()
     finally:
         connection.close()
+
+
+def _ensure_activity_end_sequence(connection: sqlite3.Connection) -> None:
+    """Add and backfill the activities-only end ordering column on old databases."""
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(activities)")}
+    if "ended_seq" not in columns:
+        connection.execute("ALTER TABLE activities ADD COLUMN ended_seq INTEGER")
+
+    classroom_ids = [row[0] for row in connection.execute("SELECT id FROM classrooms")]
+    for classroom_id in classroom_ids:
+        current_version = connection.execute(
+            "SELECT state_version FROM classrooms WHERE id = ?", (classroom_id,)
+        ).fetchone()[0]
+        current_max = connection.execute(
+            "SELECT COALESCE(MAX(ended_seq), 0) FROM activities WHERE classroom_id = ?", (classroom_id,)
+        ).fetchone()[0]
+        missing = connection.execute(
+            """SELECT id FROM activities
+               WHERE classroom_id = ? AND status = 'ended' AND ended_seq IS NULL
+               ORDER BY ended_at, rowid""",
+            (classroom_id,),
+        ).fetchall()
+        for row in missing:
+            current_max += 1
+            connection.execute("UPDATE activities SET ended_seq = ? WHERE id = ?", (current_max, row["id"]))
+        if current_max > current_version:
+            connection.execute(
+                "UPDATE classrooms SET state_version = ? WHERE id = ?", (current_max, classroom_id)
+            )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_activities_ended_sequence ON activities(classroom_id, ended_seq)"
+    )
 
 
 def init_app(app) -> None:
