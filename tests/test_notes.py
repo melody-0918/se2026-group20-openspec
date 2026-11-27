@@ -372,6 +372,38 @@ def test_failed_save_rolls_back_version(app, client, notes_case):
     assert _post(client, "import/save", preview_id=preview["preview_id"]).json["saved_version"]["import_version"] == "1"
 
 
+@pytest.mark.parametrize("all_questions_skipped", [False, True], ids=["one-skipped", "all-skipped"])
+def test_writeback_leaves_no_winner_cells_untouched(app, client, notes_case, all_questions_skipped):
+    teacher_id, _, sheets = notes_case
+    sheets.grid.cells[1, 3] = _cell("單題原有答案")
+    sheets.grid.cells[2, 4] = _cell("小題原有答案")
+    snapshot = _snapshot(app, teacher_id, _save(client))
+    single, group = snapshot.questions
+    # Exercise the empty answers array without changing the DTO used by the provider.
+    single = replace(single, answers=[])
+    if all_questions_skipped:
+        group = replace(group, winner_id=None, answers=[])
+    snapshot = replace(snapshot, questions=(single, group))
+    app.config["NOTES_ENDED_SNAPSHOT"] = lambda *_: snapshot
+
+    response = _post(client, "writeback/preview", activity_id=snapshot.activity_id)
+    review = response.json["writeback_review"]
+    expected_ids = [] if all_questions_skipped else ["q-3-item-1", "q-3-item-2"]
+    assert (response.status_code, review["status"], review["skipped_count"]) == (
+        200, "preview", 2 if all_questions_skipped else 1,
+    )
+    assert [target["item_id"] for target in review["targets"]] == expected_ids
+    assert not sheets.writes
+
+    confirmed = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
+    assert confirmed.json["writeback_review"]["status"] == "verified"
+    assert sheets.grid.text(1, 3) == "單題原有答案"
+    if all_questions_skipped:
+        assert not sheets.writes and sheets.grid.text(2, 4) == "小題原有答案"
+    else:
+        assert sheets.writes == [[(2, 4, "(2)"), (3, 4, "=literal")]]
+
+
 def test_writeback_reconfirms_moved_source_and_only_writes_winner(app, client, notes_case):
     teacher_id, _, sheets = notes_case
     version = _save(client)
@@ -407,10 +439,35 @@ def test_writeback_partial_failure_then_safe_retry(app, client, notes_case):
     assert partial.status_code == 502
     assert partial.json["error"]["code"] == "SHEETS_WRITE_UNVERIFIED"
     assert [target["status"] for target in partial.json["writeback_review"]["targets"]] == ["verified", "unverified"]
+    assert sheets.grid.text(2, 4) == "(2)" and not sheets.grid.entered(3, 4)
     sheets.mode = "normal"
     retried = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
     assert retried.json["writeback_review"]["status"] == "verified"
-    assert sheets.writes[-1] == [(3, 4, "=literal")]
+    expected_writes = [[(2, 4, "(2)"), (3, 4, "=literal")], [(3, 4, "=literal")]]
+    assert sheets.writes == expected_writes
+    repeated = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
+    assert repeated.json["writeback_review"]["status"] == "verified"
+    assert sheets.writes == expected_writes
+
+
+def test_writeback_retry_preserves_an_external_answer(app, client, notes_case):
+    teacher_id, _, sheets = notes_case
+    snapshot = _snapshot(app, teacher_id, _save(client))
+    app.config["NOTES_ENDED_SNAPSHOT"] = lambda *_: snapshot
+    review = _post(client, "writeback/preview", activity_id=snapshot.activity_id).json["writeback_review"]
+    sheets.mode = "partial"
+    partial = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
+    assert partial.status_code == 502
+
+    sheets.grid.cells[3, 4] = _cell("外部編輯的答案")
+    sheets.mode = "normal"
+    retry = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
+    assert (retry.status_code, retry.json["error"]["code"]) == (409, "WRITEBACK_CONFLICT")
+    result = retry.json["writeback_review"]
+    assert result["status"] == "conflict"
+    assert [target["status"] for target in result["targets"]] == ["verified", "conflict"]
+    assert len(sheets.writes) == 1
+    assert sheets.grid.text(2, 4) == "(2)" and sheets.grid.text(3, 4) == "外部編輯的答案"
 
 
 def test_writeback_readback_conflict_wont_overwrite_on_retry(app, client, notes_case):
@@ -462,11 +519,37 @@ def test_writeback_repreviews_edited_old_value_and_rejects_new_question(app, cli
     review = _post(client, "writeback/preview", activity_id=snapshot.activity_id).json["writeback_review"]
     sheets.grid.cells[2, 4] = _cell("教師剛編輯")
     changed = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
-    assert changed.json["writeback_review"]["targets"][0]["original_display"] == "教師剛編輯"
+    assert (changed.status_code, changed.json["error"]["code"]) == (409, "SOURCE_PREVIEW_STALE")
+    recheck = changed.json["writeback_review"]
+    assert recheck["status"] == "source_changed" and recheck["preview_id"] != review["preview_id"]
+    assert recheck["targets"][0]["original_display"] == "教師剛編輯"
+    assert not sheets.writes and sheets.grid.text(2, 4) == "教師剛編輯"
     sheets.grid.cells[1, 0] = _cell("7")
     denied = _post(client, "writeback/confirm", activity_id=snapshot.activity_id,
-                   preview_id=changed.json["writeback_review"]["preview_id"])
-    assert denied.json["error"]["code"] == "SOURCE_REIMPORT_REQUIRED" and not sheets.writes
+                   preview_id=recheck["preview_id"])
+    assert (denied.status_code, denied.json["error"]["code"]) == (409, "SOURCE_REIMPORT_REQUIRED")
+    assert not sheets.writes
+
+
+def test_writeback_reconfirms_edited_question_text(app, client, notes_case):
+    teacher_id, _, sheets = notes_case
+    snapshot = _snapshot(app, teacher_id, _save(client))
+    app.config["NOTES_ENDED_SNAPSHOT"] = lambda *_: snapshot
+    review = _post(client, "writeback/preview", activity_id=snapshot.activity_id).json["writeback_review"]
+    sheets.grid.cells[2, 1] = _cell("教師修正題幹")
+
+    changed = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
+    assert (changed.status_code, changed.json["error"]["code"]) == (409, "SOURCE_PREVIEW_STALE")
+    recheck = changed.json["writeback_review"]
+    assert recheck["status"] == "source_changed" and recheck["preview_id"] != review["preview_id"]
+    stale = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=review["preview_id"])
+    assert (stale.status_code, stale.json["error"]["code"]) == (409, "SOURCE_PREVIEW_STALE")
+    assert not sheets.writes
+
+    confirmed = _post(client, "writeback/confirm", activity_id=snapshot.activity_id, preview_id=recheck["preview_id"])
+    assert confirmed.json["writeback_review"]["status"] == "verified"
+    assert sheets.writes == [[(2, 4, "(2)"), (3, 4, "=literal")]]
+    assert sheets.grid.text(2, 1) == "教師修正題幹"
 
 
 def test_writeback_repreviews_changed_display_without_writing(app, client, notes_case):
