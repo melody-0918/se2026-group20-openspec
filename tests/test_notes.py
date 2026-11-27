@@ -381,6 +381,21 @@ def test_writeback_reconfirms_moved_source_and_only_writes_winner(app, client, n
     assert len(sheets.writes) == 1
 
 
+def test_browser_writeback_review_stays_in_notes_page(app, client, notes_case):
+    teacher_id, _, _ = notes_case
+    version = _save(client)
+    snapshot = _snapshot(teacher_id, version)
+    app.config["NOTES_ENDED_SNAPSHOT"] = lambda *_: snapshot
+    response = client.post(
+        "/notes/courses/course/writeback/preview",
+        data={"csrf_token": "notes-fixture", "activity_id": "event"},
+    )
+    page = response.get_data(as_text=True)
+    assert response.status_code == 200 and response.content_type.startswith("text/html")
+    assert "請確認要回填的答案" in page
+    assert "操作無法完成" not in page
+
+
 def test_writeback_partial_failure_then_safe_retry(app, client, notes_case):
     teacher_id, _, sheets = notes_case
     app.config["NOTES_ENDED_SNAPSHOT"] = lambda *_: snapshot

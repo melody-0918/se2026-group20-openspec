@@ -1,4 +1,5 @@
 import hashlib
+import json
 import sqlite3
 import threading
 
@@ -8,6 +9,7 @@ from werkzeug.security import generate_password_hash
 from guided_notes import activities
 from guided_notes.db import get_db, init_db
 from guided_notes.errors import AppError
+from guided_notes.notes import list_course_catalogs as list_notes_course_catalogs
 
 
 def teacher(app, username):
@@ -56,6 +58,125 @@ def test_teacher_course_catalog_and_classroom_ownership(app):
         with pytest.raises(AppError) as err:
             activities.add_course_catalog(owner, course, "missing", "9")
         assert err.value.code == "CATALOG_NOT_FOUND"
+
+
+def test_notes_course_access_defaults_to_activities_ownership_and_allows_override(app):
+    owner = teacher(app, "owner")
+    other = teacher(app, "other")
+    with app.app_context():
+        course = activities.create_course(owner, "我的課程")
+        assert app.config["NOTES_COURSE_ACCESS"] is activities.notes_course_access
+        assert activities.notes_course_access(owner, course) is True
+        assert activities.notes_course_access(other, course) is False
+        assert activities.notes_course_access(owner, "missing-course") is False
+        assert activities.notes_course_access(owner, None) is False
+
+        app.config["NOTES_COURSE_ACCESS"] = lambda teacher_id, course_id: (
+            teacher_id == owner and course_id == "test-override"
+        )
+        assert list_notes_course_catalogs(owner, "test-override") == []
+        with pytest.raises(AppError) as err:
+            list_notes_course_catalogs(other, "test-override")
+        assert err.value.code == "COURSE_FORBIDDEN"
+
+
+def test_course_catalogs_are_scoped_and_demo_mode_remains_compatible(app):
+    owner = teacher(app, "owner")
+    with app.app_context():
+        course_x = activities.create_course(owner, "課程 X")
+        course_y = activities.create_course(owner, "課程 Y")
+        versions = {
+            course_x: ("catalog-x", "講義 X"),
+            course_y: ("catalog-y", "講義 Y"),
+        }
+        for index, (course_id, (import_id, title)) in enumerate(versions.items(), start=1):
+            layout = [{
+                "question_id": f"question-{index}", "display_number": str(index), "type": "single",
+                "items": [{"item_id": f"item-{index}", "label": "", "order": 1}],
+            }]
+            get_db().execute(
+                """INSERT INTO notes_versions
+                   (import_id, import_version, teacher_id, course_id, spreadsheet_id, sheet_id, title, layout)
+                   VALUES (?, 1, ?, ?, ?, 0, ?, ?)""",
+                (import_id, owner, course_id, f"sheet-{index}", title, json.dumps(layout)),
+            )
+        get_db().commit()
+
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session["teacher_id"] = owner
+        page_x = client.get(f"/activities/teacher/courses/{course_x}")
+        page_text = page_x.get_data(as_text=True)
+        assert page_x.status_code == 200
+        assert "講義 X" in page_text and "講義 Y" not in page_text
+        assert f'href="/notes/courses/{course_x}"' in page_text
+
+        activities.add_course_catalog(owner, course_x, "catalog-x", "1")
+        with pytest.raises(AppError) as err:
+            activities.add_course_catalog(owner, course_y, "catalog-x", "1")
+        assert err.value.code == "CATALOG_NOT_FOUND"
+        assert activities.list_course_catalogs(owner, course_y) == []
+
+        activity_id = activities.create_activity(owner, activities.create_classroom(owner, course_x, "課堂"), "catalog-x", "1")
+        question = get_db().execute(
+            "SELECT question_id FROM activity_questions WHERE activity_id=?", (activity_id,)
+        ).fetchone()[0]
+        assert question == "question-1"
+
+        app.config["DEMO_CATALOG"] = True
+        demo_page = client.get(f"/activities/teacher/courses/{course_y}").get_data(as_text=True)
+        assert "示範用填空學習單" in demo_page
+        activities.add_course_catalog(owner, course_y, "demo-guided-notes", "1")
+        demo_activity = activities.create_activity(owner, activities.create_classroom(owner, course_y, "示範課堂"),
+                                                   "demo-guided-notes", "1")
+        assert get_db().execute(
+            "SELECT count(*) FROM activity_questions WHERE activity_id=?", (demo_activity,)
+        ).fetchone()[0] == 3
+
+
+def test_notes_pages_render_html_errors_and_course_links(app):
+    owner = teacher(app, "owner")
+    other = teacher(app, "other")
+    with app.app_context():
+        course = activities.create_course(owner, "我的課程")
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session.update(teacher_id=owner, csrf_token="notes-csrf")
+
+    notes_page = client.get(f"/notes/courses/{course}")
+    notes_page_text = notes_page.get_data(as_text=True)
+    assert notes_page.status_code == 200
+    assert f'href="/activities/teacher/courses/{course}"' in notes_page_text
+    assert "回課程頁" in notes_page_text
+
+    invalid_source = client.post(
+        f"/notes/courses/{course}/import/preview",
+        data={"csrf_token": "notes-csrf", "source": "http://not-a-sheets-link"},
+    )
+    invalid_text = invalid_source.get_data(as_text=True)
+    assert invalid_source.status_code == 400 and invalid_source.content_type.startswith("text/html")
+    assert "NOTES_SOURCE_INVALID" in invalid_text and "請輸入有效的 Google Sheets" in invalid_text
+    assert f'href="/notes/courses/{course}"' in invalid_text
+
+    missing_credentials = client.post(
+        f"/notes/courses/{course}/import/preview",
+        data={"csrf_token": "notes-csrf", "source": "valid-sheet-id"},
+    )
+    credential_text = missing_credentials.get_data(as_text=True)
+    assert missing_credentials.status_code == 500 and missing_credentials.content_type.startswith("text/html")
+    assert "GOOGLE_CREDENTIALS_REQUIRED" in credential_text
+    assert f'href="/notes/courses/{course}"' in credential_text
+
+    with client.session_transaction() as session:
+        session["teacher_id"] = other
+    forbidden = client.get(f"/notes/courses/{course}")
+    forbidden_text = forbidden.get_data(as_text=True)
+    assert forbidden.status_code == 403 and forbidden.content_type.startswith("text/html")
+    assert "COURSE_FORBIDDEN" in forbidden_text and "無法存取這門課程" in forbidden_text
+    assert 'href="/activities/teacher/courses"' in forbidden_text
+    missing_course = client.get("/notes/courses/not-a-course")
+    assert missing_course.status_code == 403
+    assert "COURSE_FORBIDDEN" in missing_course.get_data(as_text=True)
 
 
 def test_classroom_codes_and_team_names_are_scoped(app):
@@ -284,6 +405,7 @@ def test_api_app_errors_remain_json(app):
         raise AppError("API_FAILURE", "API 錯誤。", 422)
 
     app.add_url_rule("/api/test-error", view_func=fail_api)
+    app.add_url_rule("/notes/api/test-error", endpoint="notes.api_test_error", view_func=fail_api)
     client = app.test_client()
     response = client.get("/activities/api/student/state")
     assert response.status_code == 401
@@ -292,6 +414,10 @@ def test_api_app_errors_remain_json(app):
     api_response = client.get("/api/test-error")
     assert api_response.status_code == 422 and api_response.is_json
     assert api_response.json == {"error": {"code": "API_FAILURE", "message": "API 錯誤。"}}
+
+    notes_api_response = client.get("/notes/api/test-error")
+    assert notes_api_response.status_code == 422 and notes_api_response.is_json
+    assert notes_api_response.json["error"]["code"] == "API_FAILURE"
 
 
 def test_end_and_close_serialize_with_answer_transaction(app):
