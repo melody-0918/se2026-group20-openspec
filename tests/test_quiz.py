@@ -196,3 +196,16 @@ def test_production_factory_registers_notes_snapshot_adapter(tmp_path, monkeypat
     app = create_app({"DATABASE": str(tmp_path / "production.sqlite3")})
     assert app.config["NOTES_ENDED_SNAPSHOT"] is quiz.get_ended_snapshot
 
+
+def test_student_template_guards_poll_order_and_overlapping_requests(app):
+    _, _, _, _, token_a, _, _, _ = _setup(app)
+    client = app.test_client()
+    client.set_cookie(activities.PROOF_COOKIE, token_a)
+    page = client.get("/activities/student").get_data(as_text=True)
+    assert "let nextRequestSequence=0, appliedRequestSequence=0, pollInFlight=false" in page
+    assert "if(pollInFlight)return" in page
+    assert "if(requestSequence<=appliedRequestSequence)return" in page
+    assert "Promise.all([" in page
+    assert "if(s.state_version<=appliedVersion)return" in page
+    assert "refreshClassroomVersion" not in page
+

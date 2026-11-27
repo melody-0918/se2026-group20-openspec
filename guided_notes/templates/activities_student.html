@@ -13,8 +13,10 @@ const stateUrl={{ url_for('quiz.student_quiz_state')|tojson }};
 const csrf={{ csrf_token()|tojson }};
 let loadedActivity=null, phase=null, loadedContent=null;
 let appliedVersion={{ state.state_version }};
+let nextRequestSequence=0, appliedRequestSequence=0, pollInFlight=false;
 const content=document.getElementById('activity-content');
 const phaseLabels={preparing:'準備中',active:'搶答中',ended:'已結束'};
+function applyActivitiesVersion(s){if(s.state_version<=appliedVersion)return s.state_version===appliedVersion;appliedVersion=s.state_version;return true;}
 async function loadContent(id){if(!id||loadedActivity===id)return;loadedActivity=id;content.replaceChildren();
  const response=await fetch({{ url_for('quiz.student_activity_content',activity_id='ACTIVITY')|tojson }}.replace('ACTIVITY',encodeURIComponent(id)),{cache:'no-store'});if(!response.ok)return;loadedContent=await response.json();
  for(const q of loadedContent.questions){const form=document.createElement('form');form.dataset.question=q.question_id;const heading=document.createElement('h3');heading.textContent=q.display_number+' '+q.question_text;form.append(heading);
@@ -27,10 +29,15 @@ async function submitForm(event){event.preventDefault();const form=event.current
  const payload={question_id:form.dataset.question,submission_id:crypto.randomUUID(),answers};const response=await fetch({{ url_for('quiz.submit_api',classroom_id='CLASSROOM',activity_id='ACTIVITY')|tojson }}.replace('CLASSROOM',encodeURIComponent({{ state.classroom_id|default('')|tojson }})).replace('ACTIVITY',encodeURIComponent(loadedActivity)),{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(payload)});
  let message='答案已送出。';if(!response.ok){const body=await response.json();message=body.error?.message||'送出失敗。'}form.querySelector('.submission-message').textContent=message;}
 function renderStatus(data){for(const item of data.submissions||[]){const form=content.querySelector(`[data-question="${CSS.escape(item.question_id)}"]`);if(!form)continue;const line=form.querySelector('.question-status');if(data.phase==='ended'){const winnerAnswers=(item.winner?.answers||[]).map(a=>a.text).join('／')||'無答案';const myAnswers=(item.mine?.answers||[]).map(a=>a.text).join('／')||'未送出';line.textContent=`題號 ${item.display_number} 勝組：${item.winner?.team_name||'無'}（${winnerAnswers}）；你的答案：${myAnswers}；你的順位：${item.mine?.rank??'未送出'}`;for(const input of form.querySelectorAll('input,button'))input.disabled=true;}else if(item.submitted){line.textContent=`題號 ${item.display_number} 已送出：${item.answers.map(a=>a.text).join('／')}`;}else{line.textContent='';}}}
-async function refresh(){try{const r=await fetch(stateUrl,{cache:'no-store'});if(!r.ok)return;const d=await r.json();if(d.classroom_ended){document.querySelector('main').replaceChildren(Object.assign(document.createElement('h1'),{textContent:'學生課堂'}),Object.assign(document.createElement('p'),{textContent:'課堂已結束'}));return;}
- const classroomResponse=await fetch({{ url_for('activities.student_state_api')|tojson }},{cache:'no-store'});const activityState=classroomResponse.ok?await classroomResponse.json():null;if(activityState?.classroom_ended){document.querySelector('main').replaceChildren(Object.assign(document.createElement('h1'),{textContent:'學生課堂'}),Object.assign(document.createElement('p'),{textContent:'課堂已結束'}));return;}
- const name=document.getElementById('activity-name');const phaseText=document.getElementById('activity-phase');if(d.activity_id!==loadedActivity){loadedActivity=null;phase=d.phase;loadedContent=null;name.textContent='';await loadContent(d.activity_id);}if(activityState?.activity?.id===d.activity_id){name.textContent=activityState.activity.name;phaseText.textContent=phaseLabels[activityState.activity.phase]||activityState.activity.phase;}else if(!d.activity_id){name.textContent='';phaseText.textContent='等候活動';}if(d.phase!==phase)setPhase(d.phase);document.getElementById('waiting').hidden=!!d.activity_id;renderStatus(d);
- }catch(_){}}
-async function refreshClassroomVersion(){try{const r=await fetch({{ url_for('activities.student_state_api')|tojson }},{cache:'no-store'});if(!r.ok)return;const s=await r.json();if(s.state_version<=appliedVersion)return;appliedVersion=s.state_version;}catch(_){}}
-refresh();setInterval(refresh,1000);setInterval(refreshClassroomVersion,1000);
+async function refresh(){if(pollInFlight)return;pollInFlight=true;const requestSequence=++nextRequestSequence;try{
+ const [quizResponse,classroomResponse]=await Promise.all([
+  fetch(stateUrl,{cache:'no-store'}),
+  fetch({{ url_for('activities.student_state_api')|tojson }},{cache:'no-store'})
+ ]);if(!quizResponse.ok)return;const d=await quizResponse.json();const activityState=classroomResponse.ok?await classroomResponse.json():null;
+ if(requestSequence<=appliedRequestSequence)return;appliedRequestSequence=requestSequence;
+ const freshActivityState=activityState&&applyActivitiesVersion(activityState)?activityState:null;
+ if(d.classroom_ended||freshActivityState?.classroom_ended){document.querySelector('main').replaceChildren(Object.assign(document.createElement('h1'),{textContent:'學生課堂'}),Object.assign(document.createElement('p'),{textContent:'課堂已結束'}));return;}
+ const name=document.getElementById('activity-name');const phaseText=document.getElementById('activity-phase');if(d.activity_id!==loadedActivity){loadedActivity=null;phase=d.phase;loadedContent=null;name.textContent='';await loadContent(d.activity_id);}if(freshActivityState?.activity?.id===d.activity_id){name.textContent=freshActivityState.activity.name;phaseText.textContent=phaseLabels[freshActivityState.activity.phase]||freshActivityState.activity.phase;}else if(d.activity_id){phaseText.textContent=phaseLabels[d.phase]||d.phase||'';}else{name.textContent='';phaseText.textContent='等候活動';}if(d.phase!==phase)setPhase(d.phase);document.getElementById('waiting').hidden=!!d.activity_id;renderStatus(d);
+ }catch(_){}finally{pollInFlight=false;}}
+refresh();setInterval(refresh,1000);
 </script>{% endif %}</body></html>
