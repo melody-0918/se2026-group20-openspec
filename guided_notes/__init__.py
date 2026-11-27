@@ -1,6 +1,6 @@
 """Flask application factory for the local Guided Notes quiz project."""
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, render_template, request, url_for
 from werkzeug.exceptions import HTTPException
 
 from .activities import bp as activities_bp
@@ -28,7 +28,33 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     @app.errorhandler(AppError)
     def handle_app_error(error: AppError):
-        return jsonify({"error": {"code": error.code, "message": error.message}}), error.status_code
+        is_api = request.path.startswith("/api/") or "/api/" in request.path
+        is_activities_page = (request.endpoint or "").startswith("activities.") and not is_api
+        if is_api or not is_activities_page:
+            return jsonify({"error": {"code": error.code, "message": error.message}}), error.status_code
+
+        endpoint = request.endpoint or ""
+        view_args = request.view_args or {}
+        if endpoint in {"activities.student_join", "activities.student_join_page", "activities.student_page"}:
+            return_url = url_for("activities.student_join_page")
+            return_label = "返回學生加入頁"
+        elif endpoint in {"activities.teacher_courses", "activities.teacher_create_course"}:
+            return_url = url_for("activities.teacher_courses")
+            return_label = "返回課程列表"
+        elif "course_id" in view_args:
+            return_url = url_for("activities.teacher_course", course_id=view_args["course_id"])
+            return_label = "返回課程頁"
+        elif "classroom_id" in view_args:
+            return_url = url_for("activities.teacher_classroom", classroom_id=view_args["classroom_id"])
+            return_label = "返回課堂控制頁"
+        else:
+            return_url = url_for("pages.index")
+            return_label = "返回首頁"
+
+        return render_template(
+            "error.html", error_code=error.code, error_message=error.message,
+            return_url=return_url, return_label=return_label,
+        ), error.status_code
 
     @app.errorhandler(HTTPException)
     def handle_http_error(error: HTTPException):
