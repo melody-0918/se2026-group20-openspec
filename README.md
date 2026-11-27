@@ -1,15 +1,15 @@
 # se2026-group20-openspec
 
-軟體工程期末專題：Vibe Coding 課堂搶答系統（OpenSpec 組）。此 repo 目前提供本機 Flask 共用骨架、教師登入、notes 題目清單接入點，以及 activities 課程／課堂／活動階段流程。quiz 的作答、順位、結算與結果仍由後續 change 負責。
+軟體工程期末專題：Vibe Coding 課堂搶答系統（OpenSpec 組）。此 repo 提供本機 Flask 共用骨架、教師登入、Guided Notes 匯入與回填、課程／課堂／活動階段，以及 quiz 作答、順位、結算與結果。
 
 - 同大組 SpecKit 小組：[Afra0704/se2026-group20-speckit](https://github.com/Afra0704/se2026-group20-speckit)
 - 共同需求與決策紀錄：[shared-requirements.md](https://github.com/Afra0704/se2026-group20-speckit/blob/master/docs/shared-requirements.md)
 
 ## 技術與模組
 
-使用 Python 3.13、Flask app factory、Jinja、原生 JavaScript、SQLite，只在本機執行。`notes`、`activities`、`quiz` 各自以 Blueprint 掛載。activities 提供教師課程與課程清單關聯、課堂加入碼、學生加入證明、活動階段與狀態同步；notes 已提供 Google Sheets 匯入與回填，並已透過 `NOTES_COURSE_ACCESS` 與 activities 完成課程授權接線；與 quiz 的結算快照（`NOTES_ENDED_SNAPSHOT`）尚待 `add-quiz-submission-results` 接入；答案提交、順位、結算、結果與 CSV 匯出由後續 change 負責。
+使用 Python 3.13、Flask app factory、Jinja、原生 JavaScript、SQLite，只在本機執行。`notes`、`activities`、`quiz` 各自以 Blueprint 掛載。activities 提供教師課程與課程清單關聯、課堂加入碼、學生加入證明、活動階段與狀態同步；notes 提供 Google Sheets 匯入與回填，並透過 `NOTES_COURSE_ACCESS` 與 activities 完成課程授權接線。quiz 提供按題號整組提交、成功重送、受理順位、教師與學生結果，以及 Notes 結算快照（`NOTES_ENDED_SNAPSHOT`）。CSV 匯出本身由組員 A 負責。
 
-Foundation 的 `list_available_catalogs(teacher_id)` 和 `get_catalog(teacher_id, import_id, import_version)` 保留既有清單摘要與固定版本題目結構；activities 與 quiz 只能透過這兩個函式取得講義資料，不直接讀取 notes 資料表。摘要含 `import_id`、`import_version`、`title`、`question_count`，完整題目欄位見 [Foundation 規格](openspec/specs/app-foundation/spec.md)；Notes 另提供課程範圍的 `list_course_catalogs()` 和 `get_course_catalog()`，後者可取得固定版本題目與小題文字，正式講義保存在共用 SQLite，使用 `GUIDED_NOTES_DEMO_CATALOG=0` 驗收正式講義，設為 `1` 則所有已登入教師可使用含題組與單題的示範清單。參照 [Notes 整合設計](openspec/changes/add-guided-notes-import-writeback/design.md)。教師登入後由「管理課程與課堂」建立課程，再從課程頁點「匯入／管理講義」進入 notes；匯入後返回課程頁加入該講義版本，再建立課堂及活動，活動固定版本與題目識別。正式模式只顯示該課程已匯入的版本；啟用 `GUIDED_NOTES_DEMO_CATALOG=1` 時可加入示範清單，無需 Google 憑證。課堂各有獨立 6 碼加入碼。同堂正規化後同名組別共用 team，但每個瀏覽器各自取得 HttpOnly 加入證明 cookie，保留 cookie 可在原瀏覽器重新整理後恢復，加入碼或組名不能取代加入證明。教師可在課堂控制頁建立活動並開始或結束活動，同堂最多一個搶答中活動；學生約每秒輪詢，活動顯示順序為搶答中、最新建立的準備中、最近結束，皆無才等候。關課後有效證明仍可查看「課堂已結束」與目前選取活動狀態，活動結果由 quiz change 負責；教師資源權限在後端檢查，狀態變更沿用共用 CSRF 保護。quiz 寫入答案時須在同一 SQLite 連線以 `BEGIN IMMEDIATE` 開啟交易，呼叫 activities 的 `assert_submission_eligible(connection, classroom_id, activity_id, team_id, question_id)`，成功後在同一交易寫入答案並由 quiz 提交；該函式不自行開啟或提交交易，不符合資格時丟出 `AppError`。活動結束與關閉課堂也使用 `BEGIN IMMEDIATE`，讓已提交的結束狀態之後不再受理答案。相關介面與規則見 [活動 change 設計](openspec/changes/archive/2026-11-27-add-classroom-activity-phases/design.md)。
+Foundation 的 `list_available_catalogs(teacher_id)` 和 `get_catalog(teacher_id, import_id, import_version)` 提供固定版本題目結構；quiz 不直接讀 Notes 資料表。正式模式另使用 `get_course_catalog()` 取得題目及小題顯示文字；示範模式只顯示題號與小題標號。摘要欄位與題目結構見 [Foundation 規格](openspec/specs/app-foundation/spec.md)。正式講義可用 `GUIDED_NOTES_DEMO_CATALOG=0` 驗收，設為 `1` 則可用含題組與單題的示範清單，無需 Google 憑證。參照 [Notes 整合設計](openspec/changes/add-guided-notes-import-writeback/design.md)。教師登入後建立課程、匯入或選取講義版本，加入課程後建立課堂及活動；活動固定題目版本。課堂各有獨立加入碼。同堂正規化後同名組別共用 team，但各瀏覽器以 HttpOnly 加入證明 cookie 恢復原組別。教師可在課堂控制頁建立、開始或結束活動，同堂最多一個搶答中活動；學生約每秒輪詢，活動顯示順序為搶答中、最新建立的準備中、最近結束，皆無才等候。準備中學生可看固定版本題目，搶答中可填答。每題或題組須一次填妥所有答案，每小題不得空白且上限 200 字；同組成功重送會取代答案並重新排序，同次請求重試則不重複受理。教師可在頁面查看答案與順位，活動結束後檢視勝組並透過活動識別碼進入同課程 Notes 回填。學生搶答中只看到自己的送出狀態，結束後看到勝組答案及自己組答案／順位；關課後只顯示「課堂已結束」。quiz 寫入答案時在同一 SQLite 連線以 `BEGIN IMMEDIATE` 開啟交易，先呼叫 activities 的 `assert_submission_eligible(connection, classroom_id, activity_id, team_id, question_id)`，再在同一交易寫入；資格拒絕時不改變舊答案。活動結束及關閉課堂也使用 `BEGIN IMMEDIATE`，確保只有結束前受理的答案進入結果。相關介面與規則見 [活動 change 設計](openspec/changes/archive/2026-11-27-add-classroom-activity-phases/design.md)。
 
 ## 環境變數與機敏資料
 
@@ -80,9 +80,9 @@ questions = parse_layout(sheets.read(spreadsheet_id, tab_id))
 print([(question["display_number"], len(question["items"])) for question in questions])
 ```
 
-課程授權已接通，可直接從活動課程頁進入 `/notes/courses/<course_id>` 匯入講義。分別用單題範本副本和移動過表頭、欄位與題數的題組講義副本匯入、預覽及保存。回填需等 quiz 的結算快照接入後才能操作；接入後可輸入活動識別碼，核對預覽再確認回填。畫面顯示回讀確認後，在 Google Sheets 核對格位、答案、標號與格式。來源移動或內容變動時先檢查更新後的預覽，無法與固定版本配對時依提示重新匯入。
+課程授權已接通，可直接從活動課程頁進入 `/notes/courses/<course_id>` 匯入講義。分別用單題範本副本和移動過表頭、欄位與題數的題組講義副本匯入、預覽及保存。活動結束後，教師課堂頁會顯示活動識別碼及該課程 Notes 入口；輸入活動識別碼後核對預覽，再確認回填。畫面顯示回讀確認後，在 Google Sheets 核對格位、答案、標號與格式。來源移動或內容變動時先檢查更新後的預覽，無法與固定版本配對時依提示重新匯入。
 
-`pytest` 的 Sheets 與結算測試使用替身。`NOTES_COURSE_ACCESS` 已由 activities 在 `create_app` 註冊；`NOTES_ENDED_SNAPSHOT` 尚未接入，回填操作會回報整合未就緒。真正的登入、讀寫與人工驗收須另外執行。
+`pytest` 的 Sheets 與結算測試使用替身。`NOTES_COURSE_ACCESS` 由 activities 註冊；`NOTES_ENDED_SNAPSHOT` 由 `create_app` 註冊為 quiz 的 `get_ended_snapshot(teacher_id, activity_id)` adapter。真正的 Google Sheets 登入、讀寫與人工驗收須另外執行。
 
 ## 開發流程
 

@@ -229,8 +229,11 @@ def _question_numbers(connection: sqlite3.Connection, activity_id: str) -> list[
 def student_state(token: str | None) -> dict:
     connection = get_db()
     proof = _proof(connection, token)
+    if proof["classroom_status"] == "closed":
+        return {"classroom_ended": True, "state_version": proof["state_version"]}
     activity = _selected_activity(connection, proof["classroom_id"])
     result = {
+        "classroom_id": proof["classroom_id"],
         "classroom_name": proof["classroom_name"], "team_name": proof["team_name"],
         "classroom_status": proof["classroom_status"], "classroom_ended": proof["classroom_status"] == "closed",
         "activity": None, "state_version": proof["state_version"],

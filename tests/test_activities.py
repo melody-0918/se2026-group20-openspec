@@ -237,10 +237,10 @@ def test_activity_snapshot_state_order_close_and_quiz_eligibility(app):
         activities.close_classroom(owner, classroom)
         state = activities.student_state(token)
         assert state["classroom_ended"] is True
-        assert state["activity"]["id"] == second
-        assert state["activity"]["phase"] == "ended"
+        assert "activity" not in state
+        assert "question_numbers" not in state
         assert get_db().execute("SELECT ended_seq FROM activities WHERE id=?", (second,)).fetchone()[0] is not None
-        assert set(state) == {"classroom_name", "team_name", "classroom_status", "classroom_ended", "activity", "state_version"}
+        assert set(state) == {"classroom_ended", "state_version"}
         with pytest.raises(AppError) as err:
             activities.create_activity(owner, classroom, "demo-guided-notes", "1")
         assert err.value.code == "CLASSROOM_CLOSED"

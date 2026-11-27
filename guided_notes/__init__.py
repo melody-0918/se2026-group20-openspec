@@ -10,7 +10,7 @@ from .db import init_app as init_db_app
 from .errors import AppError
 from .notes import bp as notes_bp
 from .pages import bp as pages_bp
-from .quiz import bp as quiz_bp
+from .quiz import bp as quiz_bp, get_ended_snapshot
 
 
 def create_app(test_config: dict | None = None) -> Flask:
@@ -19,6 +19,10 @@ def create_app(test_config: dict | None = None) -> Flask:
     if test_config:
         app.config.update(test_config)
     app.config.setdefault("NOTES_COURSE_ACCESS", notes_course_access)
+    # Keep tests that explicitly exercise Notes' unconnected fallback isolated;
+    # production apps always expose the quiz adapter.
+    if not app.config.get("TESTING"):
+        app.config.setdefault("NOTES_ENDED_SNAPSHOT", get_ended_snapshot)
 
     init_db_app(app)
     app.register_blueprint(pages_bp)
