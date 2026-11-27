@@ -9,13 +9,13 @@
 
 使用 Python 3.13、Flask app factory、Jinja、原生 JavaScript、SQLite，只在本機執行。`notes`、`activities`、`quiz` 各自以 Blueprint 掛載。課程、課堂、加入碼、學生加入、活動流程、同步、作答、順位、結算、Google Sheets 匯入／回填與 CSV 匯出由後續 OpenSpec changes 負責。
 
-activities 與 quiz 只能透過 notes 的 `list_available_catalogs(teacher_id)` 和 `get_catalog(teacher_id, import_id, import_version)` 函式取得清單，不直接讀取 notes 資料表。清單摘要含 `import_id`、`import_version`、`title`、`question_count`；題目及作答項目欄位見 `openspec/changes/add-app-foundation/specs/app-foundation/spec.md`。設定 `GUIDED_NOTES_DEMO_CATALOG=1` 可使用含題組與單題的示範清單；所有已登入教師均可讀取示範資料。一般清單的持久化及匯入由後續 notes change 實作；課程範圍依 D15 留待後續 change 擴充。
+Foundation 的 `list_available_catalogs(teacher_id)` 和 `get_catalog(teacher_id, import_id, import_version)` 保留既有清單結構與示範模式。正式講義保存在共用 SQLite，驗收時使用 `GUIDED_NOTES_DEMO_CATALOG=0`。A 已提供課程範圍的 `list_course_catalogs()` 和 `get_course_catalog()`，後者可取得固定版本的題目與小題文字。B 仍需接入課程授權、活動選用與結算快照。參照 [Foundation 規格](openspec/specs/app-foundation/spec.md)、[Notes 整合設計](openspec/changes/add-guided-notes-import-writeback/design.md)。
 
 ## 環境變數與機敏資料
 
 程式只從環境變數讀取設定。啟動必須設定 `GUIDED_NOTES_SECRET_KEY` 和 `GUIDED_NOTES_DATABASE`；缺少時會指出變數名稱與設定方式。`GUIDED_NOTES_DEMO_CATALOG` 設為 `1` 才啟用示範清單。`.env.example` 僅供參考，不會自動載入，也不能放入真實值。
 
-Google OAuth client 檔與 token 必須存放在 repo 外，notes 實際呼叫 Google Sheets 功能時才需要設定 `NOTES_GOOGLE_CLIENT_SECRETS` 和 `NOTES_GOOGLE_TOKEN`。本 change 尚未實作 Google Sheets 功能。
+Google OAuth client 檔與 token 必須存放在 repo 外。Notes 呼叫 Google Sheets 或執行本機授權時會讀取 `NOTES_GOOGLE_CLIENT_SECRETS` 與 `NOTES_GOOGLE_TOKEN`，啟動程式和讀取已保存的講義版本只需要共用設定。
 
 `.gitignore` 排除 `.env`、`*.sqlite3`、`instance/`、`.venv/`、憑證與 token 檔。請勿將實際密碼、secret key、OAuth 檔案或資料庫加入版本控制。
 
@@ -51,12 +51,38 @@ python -m flask --app guided_notes:create_app run
 python -m pytest
 ```
 
-若只想關閉示範清單，可設定 `set "GUIDED_NOTES_DEMO_CATALOG=0"`。notes 使用 Google Sheets 時，請在 cmd 設定 repo 外的 OAuth 檔案路徑，例如：
+## Notes 人工授權與驗收
+
+在同一個 cmd 視窗關閉示範清單，並確認兩個 OAuth 環境變數已指向 repo 外的不同檔案。以下路徑是占位範例，已有設定可以沿用。
 
 ```bat
+set "GUIDED_NOTES_DEMO_CATALOG=0"
 set "NOTES_GOOGLE_CLIENT_SECRETS=C:\private\google-client.json"
 set "NOTES_GOOGLE_TOKEN=C:\private\google-token.json"
+python -m flask --app guided_notes:create_app init-db
+python -m flask --app guided_notes:create_app notes authorize-sheets
 ```
+
+`init-db` 會補上 Notes 資料表並保留既有教師帳號。授權指令會開啟瀏覽器，請使用已列為測試使用者且能存取講義的 Google 帳號。授權成功後 token 會存到指定路徑。收到重新授權提示時，再執行同一指令。匯入和回填的 HTTP 請求不會開啟 Google 登入。
+
+在 B 的課程授權接好之前，可從 `python -m flask --app guided_notes:create_app shell` 唯讀檢查一份測試講義。使用包含 `gid` 的分頁連結，下面的檢查會讀取該分頁並輸出題號與作答格數。
+
+```python
+from guided_notes.notes_format import parse_layout
+from guided_notes.notes_sheets import GoogleSheets, source_from_link
+
+spreadsheet_id, tab_id = source_from_link(input("測試講義分頁連結："))
+sheets = GoogleSheets()
+if tab_id is None:
+    print(sheets.tabs(spreadsheet_id))
+    tab_id = int(input("分頁 sheetId："))
+questions = parse_layout(sheets.read(spreadsheet_id, tab_id))
+print([(question["display_number"], len(question["items"])) for question in questions])
+```
+
+B 串接 D15 課程授權與已結算活動快照後，以教師身分開啟 `/notes/courses/<course_id>`。分別用單題範本副本和移動過表頭、欄位與題數的題組講義副本匯入、預覽及保存。結算後輸入活動識別碼，核對預覽再確認回填；畫面顯示回讀確認後，在 Google Sheets 核對格位、答案、標號與格式。來源移動或內容變動時先檢查更新後的預覽，無法與固定版本配對時依提示重新匯入。
+
+`pytest` 的 Sheets 與結算測試使用替身。A 側接入點是 `NOTES_COURSE_ACCESS` 與 `NOTES_ENDED_SNAPSHOT`，尚未接入時對應操作會回報整合未就緒。真正的登入、讀寫與人工驗收須另外執行。
 
 ## 開發流程
 
