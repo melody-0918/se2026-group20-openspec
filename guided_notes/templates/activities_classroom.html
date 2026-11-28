@@ -4,6 +4,7 @@
 <h2>已加入組別</h2><ul>{% for team in classroom.teams %}<li>{{ team.name }}</li>{% else %}<li>尚無組別</li>{% endfor %}</ul>
 <h2>活動</h2><ul>{% for activity in classroom.activities %}<li><strong>{{ activity.title }}</strong>（{{ {'preparing':'準備中','active':'搶答中','ended':'已結束'}[activity.status] }}；題號：{{ activity.question_numbers|join('、') }}）
 {% if activity.status == 'ended' %}<span>活動識別碼：{{ activity.id }}</span> <a href="{{ url_for('notes.workspace', course_id=classroom.course_id) }}">回填至此課程的 Guided Notes</a>{% endif %}
+{% if activity.status == 'ended' %}<a href="{{ url_for('quiz.download_results_csv', activity_id=activity.id) }}">下載 CSV</a>{% endif %}
 <section class="quiz-results" data-activity="{{ activity.id }}" data-url="{{ url_for('quiz.teacher_quiz_state', classroom_id=classroom.id, activity_id=activity.id) }}"></section>
 {% if classroom.status == 'open' %}<form method="post" action="{{ url_for('activities.teacher_transition_activity', classroom_id=classroom.id, activity_id=activity.id, action='start') }}" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button {% if activity.status != 'preparing' %}disabled{% endif %}>開始</button></form>
 <form method="post" action="{{ url_for('activities.teacher_transition_activity', classroom_id=classroom.id, activity_id=activity.id, action='end') }}" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button {% if activity.status != 'active' %}disabled{% endif %}>結束</button></form>{% endif %}</li>{% else %}<li>尚無活動</li>{% endfor %}</ul>
