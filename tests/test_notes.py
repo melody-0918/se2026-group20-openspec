@@ -8,6 +8,7 @@ from google.auth.exceptions import RefreshError
 from googleapiclient.errors import HttpError
 from httplib2 import Response
 
+from guided_notes import quiz
 from guided_notes.activities import (
     add_course_catalog, close_classroom, create_activity, create_classroom, end_activity, list_courses, start_activity,
 )
@@ -624,6 +625,42 @@ def test_invalid_settlement_does_not_reach_google(app, client, notes_case, defec
     assert sheets.reads == reads_before and not sheets.writes
     if defect in {"other_course", "unknown_activity", "foreign_course", "active_activity"}:
         provider.assert_not_called()
+
+
+def test_writeback_preserves_quiz_catalog_error_without_contacting_sheets(app, client, notes_case):
+    teacher_id, other_id, sheets = notes_case
+    version = _save(client)
+    app.config["NOTES_ENDED_SNAPSHOT"] = quiz.get_ended_snapshot
+    with app.app_context():
+        add_course_catalog(teacher_id, "course", **version)
+        classroom = create_classroom(teacher_id, "course", "Quiz 結算測試課堂")
+        activity = create_activity(teacher_id, classroom, **version)
+        assert quiz.get_ended_snapshot(other_id, activity) is None
+        assert quiz.get_ended_snapshot(teacher_id, "unknown-activity") is None
+        start_activity(teacher_id, classroom, activity)
+        pending = quiz.get_ended_snapshot(teacher_id, activity)
+        assert (pending.closed, pending.settled) == (False, False)
+        end_activity(teacher_id, classroom, activity)
+        official = quiz.get_ended_snapshot(teacher_id, activity)
+        assert (official.closed, official.settled) == (True, True)
+        assert official.questions == (QuestionResult("q-1", None), QuestionResult("q-3", None))
+
+    preview = _post(client, "writeback/preview", activity_id=activity)
+    assert preview.status_code == 200
+    preview_id = preview.json["writeback_review"]["preview_id"]
+    with app.app_context(), get_db() as db:
+        assert db.execute(
+            "UPDATE activity_questions SET question_id=? WHERE activity_id=? AND question_id=?",
+            ("unknown-question", activity, "q-1"),
+        ).rowcount == 1
+
+    factory = Mock(return_value=sheets)
+    app.config["NOTES_SHEETS_FACTORY"] = factory
+    for action, fields in (("preview", {}), ("confirm", {"preview_id": preview_id})):
+        response = _post(client, f"writeback/{action}", activity_id=activity, **fields)
+        assert (response.status_code, response.json["error"]["code"]) == (404, "CATALOG_NOT_FOUND")
+    factory.assert_not_called()
+    assert not sheets.writes
 
 
 def test_writeback_keeps_historical_activity_version_and_winner(app, client, notes_case):

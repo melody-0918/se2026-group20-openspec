@@ -2,7 +2,7 @@
 
 ## Context
 
-Foundation 提供 Flask app factory、教師登入、CSRF、SQLite 及 `/notes`。A 提供正式講義儲存、課程清單與固定版本文字查詢、OAuth 和回填驗證。`feat/notes` 已合入 main 的 `connect-notes-course-catalogs` 與 `add-quiz-submission-results`，沿用正式課程授權、固定版本內容與 Quiz 結算快照。參照 [Foundation 主規格](../../specs/app-foundation/spec.md)、[提案](proposal.md)、[差異規格](specs/guided-notes/spec.md)。
+Foundation 提供 Flask app factory、教師登入、CSRF、SQLite 及 `/notes`。A 提供正式講義儲存、課程清單與固定版本文字查詢、OAuth 和回填驗證。`feat/notes` 已合入 main 的 `connect-notes-course-catalogs` 與 `add-quiz-submission-results`，沿用正式課程授權、固定版本內容與 Quiz 結算快照。參照 [Foundation 主規格](../../../specs/app-foundation/spec.md)、[提案](proposal.md)、[差異規格](specs/guided-notes/spec.md)。
 
 ## Goals / Non-Goals
 
@@ -59,7 +59,7 @@ App Factory 註冊 `NOTES_COURSE_ACCESS`。Activities 以課程範圍的 `list_c
 
 共同需求定義 `get_ended_snapshot()` 只在活動已結束且已結算時交付不可變結果。B 負責活動及歷史資料授權、使用活動固定的課程與版本，以及選出每題唯一勝組。同組主動重送成功才取代舊答案並取得新受理順序，同一請求的網路重試維持原受理結果，結束前成功受理的有效答案依伺服器受理順序排名，第一名為勝組。A 不重新排名。
 
-B 的 App Factory 在正式啟動時將 `NOTES_ENDED_SNAPSHOT(teacher_id, activity_id)` 註冊為 `quiz.get_ended_snapshot()`。活動不可用時回 `None`。有權但活動未結束時，Provider 回 `closed=False`、`settled=False`；對 `ended` 活動則從固定版本及有效提交產生 `closed=True`、`settled=True` 的結果。Notes 對未就緒的結果保留 `RESULT_NOT_READY`（409），缺少可呼叫 Provider 時回 `NOTES_INTEGRATION_PENDING`（503）。
+B 的 App Factory 在正式啟動時將 `NOTES_ENDED_SNAPSHOT(teacher_id, activity_id)` 註冊為 `quiz.get_ended_snapshot()`。活動不存在或教師無權時回 `None`。有權但活動未結束時，Provider 回 `closed=False`、`settled=False`。活動結束即固定有效提交及結算，Provider 從固定版本及有效提交產生 `closed=True`、`settled=True` 的結果。正式流程沒有獨立的已結束未結算狀態。Notes 保留 `RESULT_NOT_READY`（409）防護及未就緒快照的替身測試。缺少可呼叫 Provider 時回 `NOTES_INTEGRATION_PENDING`（503）。
 
 Notes 網頁回填接點有 provider 時，先以一次 SQLite 唯讀查詢核對 `activities`、`classrooms`、`courses` 的既有關聯，確認活動屬於路徑課程和登入教師，再核對活動已結束。不存在或跨課程／教師的活動為 `ACTIVITY_NOT_FOUND`（404），尚未結束為 `RESULT_NOT_READY`（409），這些情境不呼叫 provider。允許讀取已關課且已結束的歷史活動。取得快照後核對回傳型別、活動、教師及活動保存的 `import_id`、`import_version`，版本或型別不符時回 `RESULT_CATALOG_MISMATCH`（409），無須讀取 Sheets。這項檢查只讀 B 的活動歸屬、階段和固定版本，答案與勝組由 provider 提供。`process_writeback()` 仍可用於 A 的獨立人工快照驗收。
 
@@ -69,7 +69,9 @@ Notes 網頁回填接點有 provider 時，先以一次 SQLite 唯讀查詢核�
 | `QuestionResult` | 每個固定版本 `question_id` 恰有一筆。`winner_id` 為勝組的非空字串識別碼，`answers: tuple[Answer, ...]` 為該組全部填空答案。無勝組時 `winner_id=None` 且 `answers=()`。 |
 | `Answer` | `item_id: str`、`text: str`。有勝組時所有預期 item 都須出現一次；A 以識別碼對照，不以快照陣列位置配對。 |
 
-上述 DTO 和 `process_writeback(sheets_factory, snapshot, course_id, preview_id=None)` 已用人工輸入和測試替身驗證。跨課程、未知版本、未知或重複題目、缺少／重複／未知填空等不相符的快照回 `RESULT_CATALOG_MISMATCH`（409）。
+若 B 載入活動題目時發現持久化題號無法對應固定講義，Provider 會在回傳快照前以 `CATALOG_NOT_FOUND`（404）拒絕，Notes 沿用狀態及錯誤碼，此路徑不比對快照，也不讀寫 Sheets。
+
+正式 Provider 為各題交付唯一的題目識別及同一勝組完整的填空識別與答案。Notes 驗證已收到的快照，若固定版本不符或題目／填空識別缺少、重複或未知，回 `RESULT_CATALOG_MISMATCH`（409），不讀寫 Sheets。保留這些異常快照的替身測試。
 
 ### 回填計畫、來源檢查與恢復（D05、D07、D09、D10、D11、D14）
 
@@ -92,7 +94,7 @@ Notes 網頁回填接點有 provider 時，先以一次 SQLite 唯讀查詢核�
 
 - **來源在確認後又被編輯**　每次寫入前重檢來源，縮小檢查與寫入的時間差，寫後逐格回讀。外部編輯可能發生在兩次請求之間，回讀衝突需呈現給教師處理。
 - **OAuth 過期、網路中斷或寫入完成但回應遺失**　標示未驗證的項目，使用同一快照恢復，先定位與回讀才決定是否續寫。
-- **A／B 開發時間不同**　先以單題、兩格題組、無勝組及未結算資料做契約驗證。以真實 B 模組及不同版面講義進行人工驗收。
+- **A／B 交接**　以正式 B 驗證單題、兩格題組、無勝組、活動尚未結束及錯誤分流。以替身覆蓋未就緒及不合法的快照，再以不同版面講義和真實 B 模組的既有人工驗收核對回填。
 
 ## Migration Plan
 
@@ -101,4 +103,3 @@ Notes 資料表沿用 `init-db` 初始化，可在空白 SQLite 或已有教師�
 ## Open Questions
 
 - **待確認，D17**　沿用來源分頁名稱或自訂名稱、顯示來源資訊、多分頁逐一預覽和保存。以此安排預設介面，兩組確認後再定字串與多分頁操作細節。
-- **待對齊驗收**　正式 B 生命週期未提供獨立的「已結束但未結算」狀態。另需確認活動題號與已存在的固定講義不符時，B 的 `CATALOG_NOT_FOUND`（404）與 Notes 的 `RESULT_CATALOG_MISMATCH`（409）如何分流。實測見 [任務紀錄](tasks.md)。
