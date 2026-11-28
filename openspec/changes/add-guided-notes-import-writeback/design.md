@@ -2,7 +2,7 @@
 
 ## Context
 
-Foundation 提供 Flask app factory、教師登入、CSRF、SQLite 及 `/notes`。A 提供正式講義儲存、課程清單與固定版本文字查詢、OAuth 和回填驗證。`origin/main` 的 `connect-notes-course-catalogs` 已接上課程授權及正式清單選用。整合檢查時 `feat/notes` 尚未包含該提交。學生端完整題目及 Quiz 結算快照仍待 B 接入。參照 [Foundation 主規格](../../specs/app-foundation/spec.md)、[提案](proposal.md)、[差異規格](specs/guided-notes/spec.md)。
+Foundation 提供 Flask app factory、教師登入、CSRF、SQLite 及 `/notes`。A 提供正式講義儲存、課程清單與固定版本文字查詢、OAuth 和回填驗證。`feat/notes` 已合入 main 的 `connect-notes-course-catalogs` 與 `add-quiz-submission-results`，沿用正式課程授權、固定版本內容與 Quiz 結算快照。參照 [Foundation 主規格](../../specs/app-foundation/spec.md)、[提案](proposal.md)、[差異規格](specs/guided-notes/spec.md)。
 
 ## Goals / Non-Goals
 
@@ -53,13 +53,13 @@ Foundation 提供 Flask app factory、教師登入、CSRF、SQLite 及 `/notes`�
 
 兩個課程查詢、課程內預覽、保存與回填共用 `NOTES_COURSE_ACCESS(teacher_id, course_id) -> bool`。`course_id` 是 B 課程識別碼的字串。無效教師為 `TEACHER_REQUIRED`（401），未接入授權為 `NOTES_INTEGRATION_PENDING`（503），課程無權限為 `COURSE_FORBIDDEN`（403）。已通過課程授權後，與該教師及該課程無關的版本和未知版本統一為 `CATALOG_NOT_FOUND`（404）。課程查詢沒有示範資料 fallback。
 
-`origin/main` 已註冊 `NOTES_COURSE_ACCESS`，以課程範圍的 `list_course_catalogs()` 驗證正式課程選用，再由 Activities 保存固定版本及題號。`get_course_catalog()` 提供該固定版本的 `question_text`、`item_text` 和 items，待 B 接入學生端與作答資料。開場前唯讀、開場後才可提交，題組仍整組送出。簽章、DTO 欄位和 Flask 設定名稱為 OpenSpec 內部介面。
+App Factory 註冊 `NOTES_COURSE_ACCESS`。Activities 以課程範圍的 `list_course_catalogs()` 驗證清單選用，並在建立活動時以 `get_course_catalog()` 重新核對課程與版本，再保存固定版本及題號。Quiz 從同一版本讀取 `question_text`、`item_text` 和 items。開場前唯讀、開場後才可提交，題組仍整組送出。簽章、DTO 欄位和 Flask 設定名稱為 OpenSpec 內部介面。
 
-#### B 待接入的已結算快照（D01、D02、D06、D08、D10、D11、D14）
+#### B 正式已結算快照（D01、D02、D06、D08、D10、D11、D14）
 
 共同需求定義 `get_ended_snapshot()` 只在活動已結束且已結算時交付不可變結果。B 負責活動及歷史資料授權、使用活動固定的課程與版本，以及選出每題唯一勝組。同組主動重送成功才取代舊答案並取得新受理順序，同一請求的網路重試維持原受理結果，結束前成功受理的有效答案依伺服器受理順序排名，第一名為勝組。A 不重新排名。
 
-B 在完成 `get_ended_snapshot()` 後註冊 `NOTES_ENDED_SNAPSHOT(teacher_id, activity_id)` 接點，回傳 `notes_writeback.EndedSnapshot`。活動不可用時轉為 `None`，未結算時轉為 `AppError` 的 `RESULT_NOT_READY`（409）。本次檢查的 `origin/main` 和 `origin/feat/quiz-submission-results` 都尚無該實作或接線，缺少可呼叫的 provider 時回 `NOTES_INTEGRATION_PENDING`（503）。
+B 的 App Factory 在正式啟動時將 `NOTES_ENDED_SNAPSHOT(teacher_id, activity_id)` 註冊為 `quiz.get_ended_snapshot()`。活動不可用時回 `None`。有權但活動未結束時，Provider 回 `closed=False`、`settled=False`；對 `ended` 活動則從固定版本及有效提交產生 `closed=True`、`settled=True` 的結果。Notes 對未就緒的結果保留 `RESULT_NOT_READY`（409），缺少可呼叫 Provider 時回 `NOTES_INTEGRATION_PENDING`（503）。
 
 Notes 網頁回填接點有 provider 時，先以一次 SQLite 唯讀查詢核對 `activities`、`classrooms`、`courses` 的既有關聯，確認活動屬於路徑課程和登入教師，再核對活動已結束。不存在或跨課程／教師的活動為 `ACTIVITY_NOT_FOUND`（404），尚未結束為 `RESULT_NOT_READY`（409），這些情境不呼叫 provider。允許讀取已關課且已結束的歷史活動。取得快照後核對回傳型別、活動、教師及活動保存的 `import_id`、`import_version`，版本或型別不符時回 `RESULT_CATALOG_MISMATCH`（409），無須讀取 Sheets。這項檢查只讀 B 的活動歸屬、階段和固定版本，答案與勝組由 provider 提供。`process_writeback()` 仍可用於 A 的獨立人工快照驗收。
 
@@ -101,4 +101,4 @@ Notes 資料表沿用 `init-db` 初始化，可在空白 SQLite 或已有教師�
 ## Open Questions
 
 - **待確認，D17**　沿用來源分頁名稱或自訂名稱、顯示來源資訊、多分頁逐一預覽和保存。以此安排預設介面，兩組確認後再定字串與多分頁操作細節。
-- **待接入及驗收**　`feat/notes` 尚待納入 `origin/main` 的課程接線。B 仍需接入固定版本文字、作答、結算與結果，以及註冊已結算快照 provider。Notes 的活動歸屬與歷史固定版本檢查已用真實 Activities 資料和結算替身驗證。
+- **待對齊驗收**　正式 B 生命週期未提供獨立的「已結束但未結算」狀態。另需確認活動題號與已存在的固定講義不符時，B 的 `CATALOG_NOT_FOUND`（404）與 Notes 的 `RESULT_CATALOG_MISMATCH`（409）如何分流。實測見 [任務紀錄](tasks.md)。
