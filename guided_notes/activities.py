@@ -12,7 +12,7 @@ from flask import Blueprint, abort, current_app, jsonify, make_response, redirec
 
 from .db import get_db
 from .errors import AppError
-from .notes import get_catalog, list_available_catalogs, list_course_catalogs as list_notes_course_catalogs
+from .notes import get_catalog, get_course_catalog, list_available_catalogs, list_course_catalogs as list_notes_course_catalogs
 
 
 bp = Blueprint("activities", __name__)
@@ -229,8 +229,11 @@ def _question_numbers(connection: sqlite3.Connection, activity_id: str) -> list[
 def student_state(token: str | None) -> dict:
     connection = get_db()
     proof = _proof(connection, token)
+    if proof["classroom_status"] == "closed":
+        return {"classroom_ended": True, "state_version": proof["state_version"]}
     activity = _selected_activity(connection, proof["classroom_id"])
     result = {
+        "classroom_id": proof["classroom_id"],
         "classroom_name": proof["classroom_name"], "team_name": proof["team_name"],
         "classroom_status": proof["classroom_status"], "classroom_ended": proof["classroom_status"] == "closed",
         "activity": None, "state_version": proof["state_version"],
@@ -256,7 +259,10 @@ def create_activity(teacher_id: int, classroom_id: str, import_id: str, import_v
     ).fetchone()
     if catalog_link is None:
         raise AppError("CATALOG_NOT_IN_COURSE", "此題目清單尚未加入課程。", 404)
-    catalog = get_catalog(teacher_id, import_id, import_version)
+    if current_app.config.get("DEMO_CATALOG"):
+        catalog = get_catalog(teacher_id, import_id, import_version)
+    else:
+        catalog = get_course_catalog(teacher_id, classroom["course_id"], import_id, import_version)
     activity_id = _id()
     activity_title = (title or "").strip() or catalog_link["title"]
     with immediate_transaction(connection):

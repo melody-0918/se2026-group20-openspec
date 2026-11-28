@@ -134,6 +134,55 @@ def test_course_catalogs_are_scoped_and_demo_mode_remains_compatible(app):
         ).fetchone()[0] == 3
 
 
+def test_activity_creation_rechecks_course_catalog_scope_and_keeps_demo_flow(app):
+    owner = teacher(app, "owner")
+    with app.app_context():
+        course_x = activities.create_course(owner, "課程 X")
+        course_y = activities.create_course(owner, "課程 Y")
+        layout = [{
+            "question_id": "legacy-question", "display_number": "1", "type": "single",
+            "items": [{"item_id": "legacy-item", "label": "", "order": 1}],
+        }]
+        get_db().execute(
+            """INSERT INTO notes_versions
+               (import_id, import_version, teacher_id, course_id, spreadsheet_id, sheet_id, title, layout)
+               VALUES ('legacy-catalog', 1, ?, ?, 'legacy-sheet', 0, '舊講義', ?)""",
+            (owner, course_x, json.dumps(layout)),
+        )
+        get_db().execute(
+            "INSERT INTO course_catalogs(course_id,import_id,import_version,title,question_count) VALUES(?,?,?,'舊關聯',1)",
+            (course_x, "legacy-catalog", "1"),
+        )
+        # Simulate a pre-wiring database row that incorrectly associates X's version with Y.
+        get_db().execute(
+            "INSERT INTO course_catalogs(course_id,import_id,import_version,title,question_count) VALUES(?,?,?,'錯誤關聯',1)",
+            (course_y, "legacy-catalog", "1"),
+        )
+        get_db().commit()
+        room_x = activities.create_classroom(owner, course_x, "X 課堂")
+        room_y = activities.create_classroom(owner, course_y, "Y 課堂")
+        y_version = get_db().execute("SELECT state_version FROM classrooms WHERE id=?", (room_y,)).fetchone()[0]
+
+        with pytest.raises(AppError) as error:
+            activities.create_activity(owner, room_y, "legacy-catalog", "1")
+        assert error.value.code == "CATALOG_NOT_FOUND"
+        assert get_db().execute("SELECT count(*) FROM activities WHERE classroom_id=?", (room_y,)).fetchone()[0] == 0
+        assert get_db().execute("SELECT count(*) FROM activity_questions").fetchone()[0] == 0
+        assert get_db().execute("SELECT state_version FROM classrooms WHERE id=?", (room_y,)).fetchone()[0] == y_version
+
+        same_course_activity = activities.create_activity(owner, room_x, "legacy-catalog", "1")
+        assert get_db().execute(
+            "SELECT question_id FROM activity_questions WHERE activity_id=?", (same_course_activity,)
+        ).fetchone()[0] == "legacy-question"
+
+        app.config["DEMO_CATALOG"] = True
+        activities.add_course_catalog(owner, course_y, "demo-guided-notes", "1")
+        demo_activity = activities.create_activity(owner, room_y, "demo-guided-notes", "1")
+        assert get_db().execute(
+            "SELECT count(*) FROM activity_questions WHERE activity_id=?", (demo_activity,)
+        ).fetchone()[0] == 3
+
+
 def test_notes_pages_render_html_errors_and_course_links(app):
     owner = teacher(app, "owner")
     other = teacher(app, "other")
@@ -237,10 +286,10 @@ def test_activity_snapshot_state_order_close_and_quiz_eligibility(app):
         activities.close_classroom(owner, classroom)
         state = activities.student_state(token)
         assert state["classroom_ended"] is True
-        assert state["activity"]["id"] == second
-        assert state["activity"]["phase"] == "ended"
+        assert "activity" not in state
+        assert "question_numbers" not in state
         assert get_db().execute("SELECT ended_seq FROM activities WHERE id=?", (second,)).fetchone()[0] is not None
-        assert set(state) == {"classroom_name", "team_name", "classroom_status", "classroom_ended", "activity", "state_version"}
+        assert set(state) == {"classroom_ended", "state_version"}
         with pytest.raises(AppError) as err:
             activities.create_activity(owner, classroom, "demo-guided-notes", "1")
         assert err.value.code == "CLASSROOM_CLOSED"

@@ -89,6 +89,27 @@ CREATE TABLE IF NOT EXISTS activity_questions (
     UNIQUE (activity_id, question_order)
 );
 
+CREATE TABLE IF NOT EXISTS quiz_submissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_id TEXT NOT NULL REFERENCES activities(id),
+    team_id TEXT NOT NULL REFERENCES teams(id),
+    question_id TEXT NOT NULL,
+    submission_id TEXT NOT NULL,
+    accepted_sequence INTEGER NOT NULL UNIQUE,
+    is_current INTEGER NOT NULL DEFAULT 1 CHECK (is_current IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (team_id, activity_id, question_id, submission_id)
+);
+CREATE INDEX IF NOT EXISTS idx_quiz_submissions_current
+    ON quiz_submissions(activity_id, question_id, is_current, accepted_sequence);
+CREATE TABLE IF NOT EXISTS quiz_answers (
+    submission_pk INTEGER NOT NULL REFERENCES quiz_submissions(id),
+    item_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    item_order INTEGER NOT NULL,
+    PRIMARY KEY (submission_pk, item_id)
+);
+
 CREATE TABLE IF NOT EXISTS notes_versions (
     import_id TEXT NOT NULL,
     import_version INTEGER NOT NULL,
