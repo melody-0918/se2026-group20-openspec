@@ -12,7 +12,7 @@ from flask import Blueprint, abort, current_app, jsonify, make_response, redirec
 
 from .db import get_db
 from .errors import AppError
-from .notes import get_catalog, list_available_catalogs, list_course_catalogs as list_notes_course_catalogs
+from .notes import get_catalog, get_course_catalog, list_available_catalogs, list_course_catalogs as list_notes_course_catalogs
 
 
 bp = Blueprint("activities", __name__)
@@ -259,7 +259,10 @@ def create_activity(teacher_id: int, classroom_id: str, import_id: str, import_v
     ).fetchone()
     if catalog_link is None:
         raise AppError("CATALOG_NOT_IN_COURSE", "此題目清單尚未加入課程。", 404)
-    catalog = get_catalog(teacher_id, import_id, import_version)
+    if current_app.config.get("DEMO_CATALOG"):
+        catalog = get_catalog(teacher_id, import_id, import_version)
+    else:
+        catalog = get_course_catalog(teacher_id, classroom["course_id"], import_id, import_version)
     activity_id = _id()
     activity_title = (title or "").strip() or catalog_link["title"]
     with immediate_transaction(connection):

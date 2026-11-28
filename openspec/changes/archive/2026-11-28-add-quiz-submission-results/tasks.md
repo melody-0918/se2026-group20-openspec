@@ -13,7 +13,7 @@
 
 ## 3. 結果、CSV 與 Notes 快照
 
-- [ ] 3.1 實作 `get_activity_results(teacher_id, activity_id)`，按固定 `question_id`／`item_id` 輸出題號、組別答案、受理序號、順位與勝組。驗證：自動測試逐欄核對單題、題組、重送及無人作答結果，且未結束或無權查詢回明確錯誤；與 A 確認 CSV 欄位對應並記錄確認結果。
+- [x] 3.1 實作 `get_activity_results(teacher_id, activity_id)`，按固定 `question_id`／`item_id` 輸出題號、組別答案、受理序號、順位與勝組。驗證：自動測試逐欄核對單題、題組、重送及無人作答結果，且未結束或無權查詢回明確錯誤；與 A 確認 CSV 欄位對應並記錄確認結果。
 - [x] 3.2 實作結果與 `EndedSnapshot`／`QuestionResult`／`Answer` adapter，並在 `create_app` 註冊 `NOTES_ENDED_SNAPSHOT`。驗證：自動測試核對已結束活動每個固定題目一筆結果、勝組全部 item、無人作答 `winner_id=None`／空答案；活動存在且教師有權但未結束時回 `closed=False`、`settled=False`，Notes 顯示 `RESULT_NOT_READY`；活動不存在或教師無權時回 `None`，Notes 顯示 `ACTIVITY_NOT_FOUND`，並由 Notes 接點確認兩種錯誤分流。
 
 ## 4. 師生結果頁與課堂入口
@@ -28,4 +28,8 @@
 
 - [x] 5.1 示範模式人工驗收：以 1 位教師及 2 組學生跑完整流程，包含幾乎同時送出同一題、先送組別成功重送、題組部分答案拒絕與整組受理、結束後師生結果及關課。驗證：教師即時順位與勝組符合受理序號，學生只看到允許資訊，關課後學生只看到「課堂已結束」。
 - [x] 5.2 人工驗收學生輸入期間輪詢更新。驗證：學生在單題與題組輸入中等待多次輪詢且教師同步操作，所有尚未送出的欄位內容維持原值。
-- [ ] 5.3 與 A 使用不同版面的真實 Guided Notes 人工驗收完整匯入、建立固定版本活動、作答、結算及實際回填 Google Sheets。驗證：由 A 確認題目與小題文字正確，題號與各 item 對應正確、題組同一勝組完整回填、小題標號與格式未被覆蓋，並回讀確認答案。
+- [x] 5.3 與 A 使用不同版面的真實 Guided Notes 人工驗收完整匯入、建立固定版本活動、作答、結算及實際回填 Google Sheets。驗證：由 A 確認題目與小題文字正確，題號與各 item 對應正確、題組同一勝組完整回填、小題標號與格式未被覆蓋，並回讀確認答案。
+
+## Verify 修正紀錄
+
+- [x] V1 修正活動建立前未依課堂課程重新確認講義版本權限的缺口：正式模式改由 `get_course_catalog(teacher_id, course_id, import_id, import_version)` 取得題目；回歸測試涵蓋舊跨課程關聯拒絕、資料與 state_version 不變、同課程正式流程及示範模式。
