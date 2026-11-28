@@ -12,7 +12,7 @@ from flask import Blueprint, abort, current_app, jsonify, make_response, redirec
 
 from .db import get_db
 from .errors import AppError
-from .notes import get_catalog, list_available_catalogs
+from .notes import get_catalog, get_course_catalog, list_available_catalogs, list_course_catalogs as list_notes_course_catalogs
 
 
 bp = Blueprint("activities", __name__)
@@ -44,6 +44,21 @@ def _owned_course(connection: sqlite3.Connection, course_id: str, teacher_id: in
     if row is None:
         raise _not_found()
     return row
+
+
+def notes_course_access(teacher_id: int | None, course_id: str | None) -> bool:
+    """Return whether the teacher owns the course requested by Notes."""
+    if teacher_id is None or not isinstance(course_id, str) or not course_id.strip():
+        return False
+    return get_db().execute(
+        "SELECT 1 FROM courses WHERE id = ? AND teacher_id = ?", (course_id, teacher_id)
+    ).fetchone() is not None
+
+
+def _available_course_catalogs(teacher_id: int, course_id: str) -> list[dict]:
+    if current_app.config.get("DEMO_CATALOG"):
+        return list_available_catalogs(teacher_id)
+    return list_notes_course_catalogs(teacher_id, course_id)
 
 
 def _owned_classroom(connection: sqlite3.Connection, classroom_id: str, teacher_id: int):
@@ -95,7 +110,7 @@ def add_course_catalog(teacher_id: int, course_id: str, import_id: str, import_v
     teacher_id = _require_teacher_id(teacher_id)
     connection = get_db()
     _owned_course(connection, course_id, teacher_id)
-    summary = next((item for item in list_available_catalogs(teacher_id)
+    summary = next((item for item in _available_course_catalogs(teacher_id, course_id)
                     if item["import_id"] == import_id and item["import_version"] == import_version), None)
     if summary is None:
         raise AppError("CATALOG_NOT_FOUND", "找不到可供此教師存取的題目清單。", 404)
@@ -214,8 +229,11 @@ def _question_numbers(connection: sqlite3.Connection, activity_id: str) -> list[
 def student_state(token: str | None) -> dict:
     connection = get_db()
     proof = _proof(connection, token)
+    if proof["classroom_status"] == "closed":
+        return {"classroom_ended": True, "state_version": proof["state_version"]}
     activity = _selected_activity(connection, proof["classroom_id"])
     result = {
+        "classroom_id": proof["classroom_id"],
         "classroom_name": proof["classroom_name"], "team_name": proof["team_name"],
         "classroom_status": proof["classroom_status"], "classroom_ended": proof["classroom_status"] == "closed",
         "activity": None, "state_version": proof["state_version"],
@@ -241,7 +259,10 @@ def create_activity(teacher_id: int, classroom_id: str, import_id: str, import_v
     ).fetchone()
     if catalog_link is None:
         raise AppError("CATALOG_NOT_IN_COURSE", "此題目清單尚未加入課程。", 404)
-    catalog = get_catalog(teacher_id, import_id, import_version)
+    if current_app.config.get("DEMO_CATALOG"):
+        catalog = get_catalog(teacher_id, import_id, import_version)
+    else:
+        catalog = get_course_catalog(teacher_id, classroom["course_id"], import_id, import_version)
     activity_id = _id()
     activity_title = (title or "").strip() or catalog_link["title"]
     with immediate_transaction(connection):
@@ -398,7 +419,7 @@ def teacher_course(course_id):
     connection = get_db()
     course = dict(_owned_course(connection, course_id, teacher_id))
     catalogs = list_course_catalogs(teacher_id, course_id)
-    available = list_available_catalogs(teacher_id)
+    available = _available_course_catalogs(teacher_id, course_id)
     classrooms = _teacher_classrooms(teacher_id, course_id)
     return render_template("activities_course.html", course=course, catalogs=catalogs,
                            available=available, classrooms=classrooms)
