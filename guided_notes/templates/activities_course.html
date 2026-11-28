@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-Hant"><head><meta charset="utf-8"><title>{{ course.name }}</title></head>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ course.name }}</title><link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}"></head>
 <body><main><h1>{{ course.name }}</h1>
 <h2>加入題目清單</h2><ul>{% for item in catalogs %}<li>{{ item.title }}（版本 {{ item.import_version }}，{{ item.question_count }} 題）</li>{% else %}<li>尚未加入清單</li>{% endfor %}</ul>
 <p><a href="{{ url_for('notes.workspace', course_id=course.id) }}">匯入／管理講義</a></p>
