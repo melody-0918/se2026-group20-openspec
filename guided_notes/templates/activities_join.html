@@ -1,3 +1,3 @@
 <!doctype html>
-<html lang="zh-Hant"><head><meta charset="utf-8"><title>加入課堂</title></head>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>加入課堂</title><link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}"></head>
 <body><main><h1>加入課堂</h1><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>加入碼 <input name="join_code" required maxlength="6" pattern="[A-Za-z0-9]{6}"></label><label>組名 <input name="team_name" required maxlength="20"></label><button>加入</button></form></main></body></html>

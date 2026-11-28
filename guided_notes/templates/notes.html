@@ -1,7 +1,12 @@
 <!doctype html>
 <html lang="zh-Hant">
-<meta charset="utf-8">
-<title>Guided Notes 講義</title>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Guided Notes 講義</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
 <main>
   <h1>Guided Notes 講義</h1>
   <p><a href="{{ url_for('pages.teacher_home') }}">回教師首頁</a> | <a href="{{ url_for('activities.teacher_course', course_id=course_id) }}">回課程頁</a></p>
@@ -96,4 +101,5 @@
     {% endif %}
   {% endif %}
 </main>
+</body>
 </html>
