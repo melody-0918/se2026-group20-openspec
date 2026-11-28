@@ -1,0 +1,418 @@
+{
+  "passed": true,
+  "started": "2026-11-28T13:54:40+08:00",
+  "ended": "2026-11-28T13:54:58+08:00",
+  "workbook": "T52-A07-專用驗收",
+  "source_identity_checks": "title, tab gids, and excluded protected workbooks verified",
+  "execution": "real Sheets API and manual settlement snapshot, official Notes endpoints",
+  "results": [
+    {
+      "case": "move",
+      "version": "1",
+      "preview_http": 200,
+      "preview_skipped_count": 1,
+      "notes_answer_batches": 0,
+      "cells_after_source_edit": {
+        "E3": "T52-KEEP",
+        "F4": "",
+        "F5": ""
+      },
+      "merges_after_source_edit": 6,
+      "http": 409,
+      "code": "SOURCE_PREVIEW_STALE",
+      "status": "source_changed",
+      "cells_after_confirm": {
+        "E3": "T52-KEEP",
+        "F4": "",
+        "F5": ""
+      },
+      "source_after_edit_equals_after_rejection": true,
+      "new_preview": "different; waiting for confirmation",
+      "new_targets": [
+        "F4",
+        "F5"
+      ],
+      "new_originals": [
+        "",
+        ""
+      ],
+      "frozen_version_unchanged": true
+    },
+    {
+      "case": "value",
+      "version": "1",
+      "preview_http": 200,
+      "preview_skipped_count": 1,
+      "notes_answer_batches": 0,
+      "cells_after_source_edit": {
+        "D2": "T52-KEEP",
+        "E3": "T52-EXTERNAL-BEFORE",
+        "E4": ""
+      },
+      "merges_after_source_edit": 6,
+      "http": 409,
+      "code": "SOURCE_PREVIEW_STALE",
+      "status": "source_changed",
+      "cells_after_confirm": {
+        "D2": "T52-KEEP",
+        "E3": "T52-EXTERNAL-BEFORE",
+        "E4": ""
+      },
+      "source_after_edit_equals_after_rejection": true,
+      "new_preview": "different; waiting for confirmation",
+      "new_targets": [
+        "E3",
+        "E4"
+      ],
+      "new_originals": [
+        "T52-EXTERNAL-BEFORE",
+        ""
+      ],
+      "frozen_version_unchanged": true
+    },
+    {
+      "case": "text",
+      "version": "1",
+      "preview_http": 200,
+      "preview_skipped_count": 1,
+      "notes_answer_batches": 0,
+      "cells_after_source_edit": {
+        "D2": "T52-KEEP",
+        "B3": "T52-EDITED-PROMPT",
+        "E3": "",
+        "E4": ""
+      },
+      "merges_after_source_edit": 6,
+      "http": 409,
+      "code": "SOURCE_PREVIEW_STALE",
+      "status": "source_changed",
+      "cells_after_confirm": {
+        "D2": "T52-KEEP",
+        "B3": "T52-EDITED-PROMPT",
+        "E3": "",
+        "E4": ""
+      },
+      "source_after_edit_equals_after_rejection": true,
+      "new_preview": "different; waiting for confirmation",
+      "new_targets": [
+        "E3",
+        "E4"
+      ],
+      "new_originals": [
+        "",
+        ""
+      ],
+      "frozen_version_unchanged": true
+    },
+    {
+      "case": "remove",
+      "version": "1",
+      "preview_http": 200,
+      "preview_skipped_count": 1,
+      "notes_answer_batches": 0,
+      "cells_after_source_edit": {
+        "E2": "",
+        "E3": ""
+      },
+      "merges_after_source_edit": 5,
+      "http": 409,
+      "code": "SOURCE_REIMPORT_REQUIRED",
+      "status": null,
+      "cells_after_confirm": {
+        "E2": "",
+        "E3": ""
+      },
+      "source_after_edit_equals_after_rejection": true,
+      "frozen_version_unchanged": true,
+      "new_preview": null
+    },
+    {
+      "case": "skip",
+      "version": "1",
+      "preview_http": 200,
+      "preview_skipped_count": 1,
+      "notes_answer_batches": 1,
+      "cells_before_confirm": {
+        "D2": "T52-KEEP",
+        "E3": "",
+        "E4": ""
+      },
+      "http": 200,
+      "code": null,
+      "status": "verified",
+      "cells_after_confirm": {
+        "D2": "T52-KEEP",
+        "E3": "T52-WIN-1",
+        "E4": "T52-WIN-2"
+      },
+      "merges": 6,
+      "non_target_unchanged": true,
+      "target_effective_format_differences": [
+        {
+          "cell": "E3",
+          "field": "horizontalAlignment",
+          "before": "omitted",
+          "after": "LEFT"
+        },
+        {
+          "cell": "E3",
+          "field": "hyperlinkDisplayType",
+          "before": "omitted",
+          "after": "PLAIN_TEXT"
+        },
+        {
+          "cell": "E4",
+          "field": "horizontalAlignment",
+          "before": "omitted",
+          "after": "LEFT"
+        },
+        {
+          "cell": "E4",
+          "field": "hyperlinkDisplayType",
+          "before": "omitted",
+          "after": "PLAIN_TEXT"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "event": "SOURCE_EDIT_DISPATCHED",
+      "case": "move"
+    },
+    {
+      "event": "FORMAL_CONFIRM",
+      "case": "move",
+      "http": 409,
+      "code": "SOURCE_PREVIEW_STALE",
+      "status": "source_changed",
+      "notes_batches": 0
+    },
+    {
+      "event": "CASE_PASS",
+      "case": "move",
+      "version": "1",
+      "preview_http": 200,
+      "preview_skipped_count": 1,
+      "notes_answer_batches": 0,
+      "cells_after_source_edit": {
+        "E3": "T52-KEEP",
+        "F4": "",
+        "F5": ""
+      },
+      "merges_after_source_edit": 6,
+      "http": 409,
+      "code": "SOURCE_PREVIEW_STALE",
+      "status": "source_changed",
+      "cells_after_confirm": {
+        "E3": "T52-KEEP",
+        "F4": "",
+        "F5": ""
+      },
+      "source_after_edit_equals_after_rejection": true,
+      "new_preview": "different; waiting for confirmation",
+      "new_targets": [
+        "F4",
+        "F5"
+      ],
+      "new_originals": [
+        "",
+        ""
+      ],
+      "frozen_version_unchanged": true
+    },
+    {
+      "event": "SOURCE_EDIT_DISPATCHED",
+      "case": "value"
+    },
+    {
+      "event": "FORMAL_CONFIRM",
+      "case": "value",
+      "http": 409,
+      "code": "SOURCE_PREVIEW_STALE",
+      "status": "source_changed",
+      "notes_batches": 0
+    },
+    {
+      "event": "CASE_PASS",
+      "case": "value",
+      "version": "1",
+      "preview_http": 200,
+      "preview_skipped_count": 1,
+      "notes_answer_batches": 0,
+      "cells_after_source_edit": {
+        "D2": "T52-KEEP",
+        "E3": "T52-EXTERNAL-BEFORE",
+        "E4": ""
+      },
+      "merges_after_source_edit": 6,
+      "http": 409,
+      "code": "SOURCE_PREVIEW_STALE",
+      "status": "source_changed",
+      "cells_after_confirm": {
+        "D2": "T52-KEEP",
+        "E3": "T52-EXTERNAL-BEFORE",
+        "E4": ""
+      },
+      "source_after_edit_equals_after_rejection": true,
+      "new_preview": "different; waiting for confirmation",
+      "new_targets": [
+        "E3",
+        "E4"
+      ],
+      "new_originals": [
+        "T52-EXTERNAL-BEFORE",
+        ""
+      ],
+      "frozen_version_unchanged": true
+    },
+    {
+      "event": "SOURCE_EDIT_DISPATCHED",
+      "case": "text"
+    },
+    {
+      "event": "FORMAL_CONFIRM",
+      "case": "text",
+      "http": 409,
+      "code": "SOURCE_PREVIEW_STALE",
+      "status": "source_changed",
+      "notes_batches": 0
+    },
+    {
+      "event": "CASE_PASS",
+      "case": "text",
+      "version": "1",
+      "preview_http": 200,
+      "preview_skipped_count": 1,
+      "notes_answer_batches": 0,
+      "cells_after_source_edit": {
+        "D2": "T52-KEEP",
+        "B3": "T52-EDITED-PROMPT",
+        "E3": "",
+        "E4": ""
+      },
+      "merges_after_source_edit": 6,
+      "http": 409,
+      "code": "SOURCE_PREVIEW_STALE",
+      "status": "source_changed",
+      "cells_after_confirm": {
+        "D2": "T52-KEEP",
+        "B3": "T52-EDITED-PROMPT",
+        "E3": "",
+        "E4": ""
+      },
+      "source_after_edit_equals_after_rejection": true,
+      "new_preview": "different; waiting for confirmation",
+      "new_targets": [
+        "E3",
+        "E4"
+      ],
+      "new_originals": [
+        "",
+        ""
+      ],
+      "frozen_version_unchanged": true
+    },
+    {
+      "event": "SOURCE_EDIT_DISPATCHED",
+      "case": "remove"
+    },
+    {
+      "event": "FORMAL_CONFIRM",
+      "case": "remove",
+      "http": 409,
+      "code": "SOURCE_REIMPORT_REQUIRED",
+      "status": null,
+      "notes_batches": 0
+    },
+    {
+      "event": "CASE_PASS",
+      "case": "remove",
+      "version": "1",
+      "preview_http": 200,
+      "preview_skipped_count": 1,
+      "notes_answer_batches": 0,
+      "cells_after_source_edit": {
+        "E2": "",
+        "E3": ""
+      },
+      "merges_after_source_edit": 5,
+      "http": 409,
+      "code": "SOURCE_REIMPORT_REQUIRED",
+      "status": null,
+      "cells_after_confirm": {
+        "E2": "",
+        "E3": ""
+      },
+      "source_after_edit_equals_after_rejection": true,
+      "frozen_version_unchanged": true,
+      "new_preview": null
+    },
+    {
+      "event": "NOTES_BATCH_DISPATCHED",
+      "case": "skip",
+      "cells": [
+        "E3",
+        "E4"
+      ],
+      "count": 1
+    },
+    {
+      "event": "FORMAL_CONFIRM",
+      "case": "skip",
+      "http": 200,
+      "code": null,
+      "status": "verified",
+      "notes_batches": 1
+    },
+    {
+      "event": "CASE_PASS",
+      "case": "skip",
+      "version": "1",
+      "preview_http": 200,
+      "preview_skipped_count": 1,
+      "notes_answer_batches": 1,
+      "cells_before_confirm": {
+        "D2": "T52-KEEP",
+        "E3": "",
+        "E4": ""
+      },
+      "http": 200,
+      "code": null,
+      "status": "verified",
+      "cells_after_confirm": {
+        "D2": "T52-KEEP",
+        "E3": "T52-WIN-1",
+        "E4": "T52-WIN-2"
+      },
+      "merges": 6,
+      "non_target_unchanged": true,
+      "target_effective_format_differences": [
+        {
+          "cell": "E3",
+          "field": "horizontalAlignment",
+          "before": "omitted",
+          "after": "LEFT"
+        },
+        {
+          "cell": "E3",
+          "field": "hyperlinkDisplayType",
+          "before": "omitted",
+          "after": "PLAIN_TEXT"
+        },
+        {
+          "cell": "E4",
+          "field": "horizontalAlignment",
+          "before": "omitted",
+          "after": "LEFT"
+        },
+        {
+          "cell": "E4",
+          "field": "hyperlinkDisplayType",
+          "before": "omitted",
+          "after": "PLAIN_TEXT"
+        }
+      ]
+    }
+  ]
+}

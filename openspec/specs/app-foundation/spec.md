@@ -80,7 +80,8 @@
 - **THEN** 三個模組路由均可由應用程式提供，且 notes 顯示空白頁
 
 ### Requirement: notes 題目清單介面
-notes SHALL 提供 `list_available_catalogs(teacher_id)` 及 `get_catalog(teacher_id, import_id, import_version)` 函式，先確認 `teacher_id` 對應資料庫中存在的教師，再回傳該教師可存取的清單；無此教師時 SHALL 以 `TEACHER_REQUIRED` 拒絕。示範模式允許所有已存在的教師存取示範清單；activities 與 quiz SHALL 僅透過這兩個函式取得題目，不得直接讀取 notes 資料表。（D10、D11；本組自行決定；D15 課程範圍留待後續 change 擴充）
+
+notes SHALL 提供 `list_available_catalogs(teacher_id)` 及 `get_catalog(teacher_id, import_id, import_version)` 函式，先確認 `teacher_id` 對應資料庫中存在的教師，再回傳該教師可存取的清單；無此教師時 SHALL 以 `TEACHER_REQUIRED` 拒絕。示範模式允許所有已存在的教師以這兩個函式存取示範清單。課程活動的版本選用與文字交付 SHALL 使用 Notes 提供的課程範圍查詢。activities 與 quiz SHALL 透過 Notes 公開查詢存取清單，禁止直接讀取 Notes 資料表。（D10、D11、D15、D19；函式名稱與結構為本組契約）
 
 #### Scenario: 列出教師可存取清單
 - **WHEN** 以已登入教師的 `teacher_id` 呼叫 `list_available_catalogs(teacher_id)`
@@ -99,16 +100,21 @@ notes SHALL 提供 `list_available_catalogs(teacher_id)` 及 `get_catalog(teache
 - **THEN** 函式以 `TEACHER_REQUIRED` 錯誤代碼拒絕請求
 
 #### Scenario: 題目及作答項目結構
-- **WHEN** 呼叫單一清單函式取得含單題與題組的清單
-- **THEN** 每題包含 `question_id`、顯示題號、`type`（`single` 或 `group`）與有序 `items`；每個 item 包含 `item_id`、顯示標號及順序，且單題恰有一個 item
+- **WHEN** 呼叫既有單一清單函式取得含單題與題組的清單
+- **THEN** 每題包含 `question_id`、`display_number`、`type`（`single` 或 `group`）與有序 `items`；每個 item 包含 `item_id`、`label` 及 `order`，且單題恰有一個 item
 
 #### Scenario: 未知清單識別或版本
-- **WHEN** 以 `teacher_id` 呼叫單一清單函式時 `import_id` 與 `import_version` 無對應可存取清單
-- **THEN** 函式以可辨識的錯誤代碼與訊息回報，不回傳其他版本清單
+- **WHEN** 以 `teacher_id` 呼叫既有單一清單函式時 `import_id` 與 `import_version` 無對應可存取清單
+- **THEN** 函式以 `CATALOG_NOT_FOUND` 回報，不回傳其他版本清單
 
 #### Scenario: 啟用示範清單
-- **WHEN** 設定 `GUIDED_NOTES_DEMO_CATALOG=1` 且任何已存在的教師列出或取得示範清單
+- **WHEN** 設定 `GUIDED_NOTES_DEMO_CATALOG=1` 且任何已存在的教師以既有教師範圍介面列出或取得示範清單
 - **THEN** 回傳包含至少一個題組與兩個單題的固定結構示範清單，題目及 items 順序明確
+
+#### Scenario: 存取課程的固定講義版本
+- **WHEN** activities 為教師選定的課程查詢講義，或為課程活動載入指定版本的題目文字
+- **THEN** Notes 先驗證該教師的課程權限，只交付該課程可存取的正式版本與該版本的題目資料
+- **AND** 既有教師範圍查詢的簽章、回傳欄位及錯誤維持相容
 
 ### Requirement: 共用錯誤回應格式
 系統對外回報錯誤 SHALL 提供可機器辨識的錯誤代碼與供使用者理解的訊息。（本組自行決定）

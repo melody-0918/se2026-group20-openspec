@@ -112,13 +112,28 @@
 
 系統 MUST 只接受已結束且已結算、符合活動固定講義版本的結果，由有權教師確認回填。每題只寫入該題勝組對應的答案；題組的所有填空均使用同一勝組。無勝組的題目 SHALL 略過。寫入 MUST 僅影響原來源的目標答案格，保留其他內容、標號及格式。
 
+正式 Quiz 活動結束時即固定結算。正式 Provider 對尚未結束的活動回傳 `closed=False`、`settled=False`，對已結束且資料有效的活動回傳 `closed=True`、`settled=True`。已結束未結算的狀態不適用於正式流程。活動不存在或教師無權時，Provider 回傳 `None`。正式結算每題提供一筆結果，題組列出同一勝組的所有 `item_id` 及答案，識別碼完整且唯一。無勝組時 `winner_id=None` 且 `answers=()`。
+
 #### Scenario: 同一勝組的全部小題回填
 - **WHEN** 教師確認已結算的活動回填，其中有一個勝出題組與一個無勝組題目
 - **THEN** 系統把同一勝組的小題答案各自寫入原來源對應填空，保留小題標號與合併格式，並略過無勝組題目
 
-#### Scenario: 結算尚未完成或識別不符
-- **WHEN** 活動已結束但尚未結算，或結果中的版本、`question_id` 或 `item_id` 無法與固定清單匹配，包括勝組答案的填空識別碼缺少、重複或未知
-- **THEN** 系統分別回報 `RESULT_NOT_READY` 或 `RESULT_CATALOG_MISMATCH`，且不對原試算表執行寫入
+#### Scenario: 活動尚未結束或快照未就緒
+- **WHEN** 請求回填的活動尚未結束，或 Notes 收到 `closed=False` 或 `settled=False` 的快照
+- **THEN** Notes 回報 `409 RESULT_NOT_READY`，且不讀取或寫入 Sheets
+
+#### Scenario: Provider 拒絕與固定講義不符的活動題號
+- **WHEN** 正式 Quiz Provider 載入活動的持久化題號時，發現題號不存在於活動固定的講義版本
+- **THEN** Provider 以 `404 CATALOG_NOT_FOUND` 先行拒絕。Notes 保留該錯誤回應，且不進入快照比對，也不讀取或寫入 Sheets
+
+#### Scenario: Notes 拒絕不合法的輸入快照
+- **WHEN** Notes 收到的快照版本不符，或其 `question_id` 或 `item_id` 缺少、重複或不在固定清單
+- **THEN** Notes 回報 `409 RESULT_CATALOG_MISMATCH`，且不讀取或寫入 Sheets
+
+#### Scenario: 回填指定活動時核對課程與歷史版本
+- **WHEN** 已獲授權的教師從課程頁選擇回填，活動屬於另一門課程或不存在，或結算快照指向同一講義較新的版本
+- **THEN** 系統對不可用活動回報 `ACTIVITY_NOT_FOUND`，對與活動固定版本不符的快照回報 `RESULT_CATALOG_MISMATCH`，且不讀取或寫入 Sheets
+- **AND** 已關課的歷史活動若屬於所選課程並有符合固定版本的已結算結果，仍可預覽及確認回填
 
 ### Requirement: 來源變動須重新確認（R10、R11、D05、D07、D11）
 

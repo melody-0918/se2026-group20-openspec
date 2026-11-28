@@ -6,8 +6,10 @@ from .db import get_db
 from .errors import AppError
 from .notes_format import catalog_questions, parse_layout
 from .notes_sheets import GoogleSheets, authorize_sheets, google_credentials_paths, source_from_link
-from .notes_store import create_import_preview, find_version, save_import, teacher_versions, version_catalog
-from .notes_writeback import process_writeback
+from .notes_store import (
+    create_import_preview, find_version, find_writeback_activity, save_import, teacher_versions, version_catalog,
+)
+from .notes_writeback import EndedSnapshot, process_writeback
 from .pages import teacher_required
 
 
@@ -236,17 +238,30 @@ def _writeback(course_id: str, *, confirm: bool):
     if preview_id == "":
         raise AppError("SOURCE_PREVIEW_STALE", "請先建立並確認回填預覽。", 409)
     get_snapshot = current_app.config.get("NOTES_ENDED_SNAPSHOT")
-    if get_snapshot is None:
+    if not callable(get_snapshot):
         raise AppError("NOTES_INTEGRATION_PENDING", "尚未接入活動結算。", 503)
+    activity = find_writeback_activity(teacher_id, course_id, activity_id)
+    if activity is None:
+        raise _activity_not_found()
+    if activity["status"] != "ended":
+        raise AppError("RESULT_NOT_READY", "活動尚未結束並完成結算。", 409)
     snapshot = get_snapshot(teacher_id, activity_id)
+    if snapshot is not None and not isinstance(snapshot, EndedSnapshot):
+        raise AppError("RESULT_CATALOG_MISMATCH", "結算快照格式不符。", 409)
     if snapshot is None or snapshot.teacher_id != teacher_id or snapshot.activity_id != activity_id:
-        raise AppError("ACTIVITY_NOT_FOUND", "找不到可供此教師回填的活動。", 404)
+        raise _activity_not_found()
+    if (snapshot.import_id, snapshot.import_version) != (activity["import_id"], activity["import_version"]):
+        raise AppError("RESULT_CATALOG_MISMATCH", "結算結果與活動固定的講義版本不符。", 409)
     result = process_writeback(_sheets, snapshot, course_id, preview_id)
     data = {"writeback_review": result, "activity_id": activity_id}
     if result["status"] in _WRITEBACK_ERRORS:
         status_code, code, message = _WRITEBACK_ERRORS[result["status"]]
         return _workspace(course_id, teacher_id, status_code, error={"code": code, "message": message}, **data)
     return _workspace(course_id, teacher_id, **data)
+
+
+def _activity_not_found() -> AppError:
+    return AppError("ACTIVITY_NOT_FOUND", "找不到可供此教師回填的活動。", 404)
 
 
 @bp.post("/courses/<course_id>/writeback/preview")
