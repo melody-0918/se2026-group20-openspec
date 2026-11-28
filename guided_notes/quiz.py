@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+from io import BytesIO
 
-from flask import Blueprint, current_app, jsonify, request, session
+from flask import Blueprint, current_app, jsonify, request, send_file, session
 
 from . import activities
 from .db import get_db
 from .errors import AppError
 from .notes import get_catalog, get_course_catalog
 from .notes_writeback import Answer, EndedSnapshot, QuestionResult
+from .results_csv import render_activity_results_csv
 
 bp = Blueprint("quiz", __name__)
 
@@ -261,6 +263,20 @@ def results_api(activity_id):
     if not teacher_id:
         raise AppError("TEACHER_REQUIRED", "請先登入教師帳號。", 401)
     return jsonify(get_activity_results(teacher_id, activity_id))
+
+
+@bp.get("/api/results/<activity_id>/csv")
+def download_results_csv(activity_id):
+    teacher_id = session.get("teacher_id")
+    if not teacher_id:
+        raise AppError("TEACHER_REQUIRED", "請先登入教師帳號。", 401)
+    results = get_activity_results(teacher_id, activity_id)
+    response = send_file(
+        BytesIO(render_activity_results_csv(results)), mimetype="text/csv",
+        as_attachment=True, download_name=f"activity-results-{activity_id}.csv",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @bp.get("/")
